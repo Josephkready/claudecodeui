@@ -3,6 +3,7 @@ import express from 'express';
 import { createProject, updateProjectDisplayName } from '@/modules/projects/services/project-management.service.js';
 import { startCloneProject } from '@/modules/projects/services/project-clone.service.js';
 import { getProjectTaskMaster } from '@/modules/projects/services/projects-has-taskmaster.service.js';
+import { getSessionTokenUsage } from '@/modules/providers/index.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 import { getArchivedProjectsWithSessions, getProjectSessionsPage, getProjectsWithSessions } from '@/modules/projects/services/projects-with-sessions-fetch.service.js';
 import { deleteOrArchiveProject, restoreArchivedProject } from '@/modules/projects/services/project-delete.service.js';
@@ -89,6 +90,25 @@ router.get(
     const offset = parseNonNegativeIntQuery(req.query.offset, 'offset', 0);
     const sessionsPage = await getProjectSessionsPage(projectId, { limit, offset });
     res.json(sessionsPage);
+  }),
+);
+
+router.get(
+  '/:projectId/sessions/:sessionId/token-usage',
+  asyncHandler(async (req, res) => {
+    // `projectId` isn't required to compute Claude token usage anymore (the
+    // sessions table stores the project_path for path recovery), but we keep
+    // it in the URL because that's the long-standing contract the React
+    // frontend builds. Provider dispatch is driven entirely from the DB row.
+    const sessionId = typeof req.params.sessionId === 'string' ? req.params.sessionId : '';
+    if (!sessionId) {
+      throw new AppError('sessionId is required', {
+        code: 'SESSION_ID_REQUIRED',
+        statusCode: 400,
+      });
+    }
+    const tokenUsage = await getSessionTokenUsage(sessionId);
+    res.json(tokenUsage);
   }),
 );
 
