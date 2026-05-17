@@ -1,0 +1,162 @@
+import fsp from 'node:fs/promises';
+import readline from 'node:readline';
+import fs from 'node:fs';
+
+import { sessionsDb } from '@/modules/database/index.js';
+import { resolveClaudeJsonlPath } from '@/modules/providers/list/claude/claude-sessions.provider.js';
+
+/**
+ * Token-usage summary shape returned to the frontend for a Claude session.
+ *
+ * Matches the legacy `/api/projects/.../sessions/.../token-usage` payload so
+ * the React `tokenBudget` consumers keep working without changes.
+ */
+export type ClaudeTokenUsage = {
+  used: number;
+  total: number;
+  breakdown: {
+    input: number;
+    cacheCreation: number;
+    cacheRead: number;
+  };
+};
+
+const DEFAULT_CONTEXT_WINDOW = 160000;
+
+type ResolveClaudeJsonlPath = typeof resolveClaudeJsonlPath;
+
+type GetClaudeSessionTokenUsageDependencies = {
+  /** Returns the indexed session row (or null) for a given sessionId. */
+  getSessionById: (sessionId: string) => {
+    jsonl_path: string | null;
+    project_path: string | null;
+  } | null;
+  /** Resolves the JSONL path that actually exists on disk now. */
+  resolveJsonlPath: ResolveClaudeJsonlPath;
+  /** Reads CONTEXT_WINDOW env override, returning a positive integer or null. */
+  readContextWindowOverride: () => number | null;
+};
+
+function readDefaultContextWindowOverride(): number | null {
+  const raw = process.env.CONTEXT_WINDOW;
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+const defaultDependencies: GetClaudeSessionTokenUsageDependencies = {
+  getSessionById: (sessionId) => {
+    const row = sessionsDb.getSessionById(sessionId);
+    if (!row) {
+      return null;
+    }
+    return {
+      jsonl_path: row.jsonl_path ?? null,
+      project_path: row.project_path ?? null,
+    };
+  },
+  resolveJsonlPath: resolveClaudeJsonlPath,
+  readContextWindowOverride: readDefaultContextWindowOverride,
+};
+
+/**
+ * Builds the empty token-usage payload used when a session is unknown, has no
+ * file on disk, or contains no assistant messages with usage data.
+ */
+function buildEmptyTokenUsage(contextWindow: number): ClaudeTokenUsage {
+  return {
+    used: 0,
+    total: contextWindow,
+    breakdown: { input: 0, cacheCreation: 0, cacheRead: 0 },
+  };
+}
+
+/**
+ * Reads a JSONL file as a stream and returns the latest assistant `usage`
+ * record. Returns `null` if no such record is found. Streaming keeps memory
+ * bounded for long sessions.
+ */
+async function readLatestAssistantUsage(filePath: string): Promise<{
+  input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+} | null> {
+  // Streaming line-by-line and tracking the last `usage` we see is O(file)
+  // but avoids loading the whole JSONL into memory. The provider history
+  // reader uses the same approach.
+  const fileStream = fs.createReadStream(filePath);
+  const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+
+  let latestUsage: ReturnType<typeof JSON.parse> | null = null;
+
+  for await (const line of rl) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    try {
+      const entry = JSON.parse(line);
+      if (entry?.type === 'assistant' && entry.message?.usage) {
+        latestUsage = entry.message.usage;
+      }
+    } catch {
+      // Skip malformed lines that can happen during concurrent writes.
+    }
+  }
+
+  return latestUsage;
+}
+
+/**
+ * Loads token usage for one Claude session. Always resolves; never throws on
+ * a missing session or missing JSONL file (those produce the zeroed-out
+ * `buildEmptyTokenUsage` shape so the frontend can render an empty token
+ * budget instead of an error toast).
+ *
+ * Exported for the route handler and for direct test coverage.
+ */
+export async function getClaudeSessionTokenUsage(
+  sessionId: string,
+  dependencies: GetClaudeSessionTokenUsageDependencies = defaultDependencies,
+): Promise<ClaudeTokenUsage> {
+  const contextWindow = dependencies.readContextWindowOverride() ?? DEFAULT_CONTEXT_WINDOW;
+
+  const sessionRow = dependencies.getSessionById(sessionId);
+  const jsonlPath = await dependencies.resolveJsonlPath(
+    sessionRow?.jsonl_path ?? null,
+    sessionId,
+    sessionRow?.project_path ?? null,
+  );
+
+  if (!jsonlPath) {
+    return buildEmptyTokenUsage(contextWindow);
+  }
+
+  try {
+    await fsp.access(jsonlPath);
+  } catch {
+    return buildEmptyTokenUsage(contextWindow);
+  }
+
+  const usage = await readLatestAssistantUsage(jsonlPath);
+  if (!usage) {
+    return buildEmptyTokenUsage(contextWindow);
+  }
+
+  const inputTokens = Number(usage.input_tokens) || 0;
+  const cacheCreationTokens = Number(usage.cache_creation_input_tokens) || 0;
+  const cacheReadTokens = Number(usage.cache_read_input_tokens) || 0;
+
+  return {
+    used: inputTokens + cacheCreationTokens + cacheReadTokens,
+    total: contextWindow,
+    breakdown: {
+      input: inputTokens,
+      cacheCreation: cacheCreationTokens,
+      cacheRead: cacheReadTokens,
+    },
+  };
+}
