@@ -32,6 +32,8 @@ export const FILE_TREE_EXCLUDED_DIRS: ReadonlySet<string> = new Set([
   'out',            // Next.js / Go
   '.next',
   '.nuxt',
+  '.parcel-cache',
+  'vendor',         // PHP / Go / bundled deps
 
   // Python virtualenvs + caches.
   '.venv',
@@ -45,6 +47,11 @@ export const FILE_TREE_EXCLUDED_DIRS: ReadonlySet<string> = new Set([
   // Coverage outputs.
   'htmlcov',
   '.coverage',
+  'coverage',
+  '.nyc_output',
+
+  // IDE / editor state.
+  '.idea',
 
   // Multi-agent worktree convention (`/start-work` + agent frameworks).
   // The actual code lives in the originating repo; the worktree copies

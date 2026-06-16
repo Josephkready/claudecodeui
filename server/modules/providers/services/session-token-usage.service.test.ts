@@ -71,6 +71,21 @@ test('getSessionTokenUsage returns an unsupported payload for Gemini sessions', 
   assert.match(result.message ?? '', /Gemini/);
 });
 
+test('getSessionTokenUsage returns an unsupported payload for OpenCode sessions', async () => {
+  // OpenCode arrived upstream after this service was split out of index.js;
+  // it must not fall through to the Claude JSONL reader.
+  const result = await getSessionTokenUsage('opencode-session-id', {
+    getSessionById: () => ({ provider: 'opencode' }),
+    getClaudeUsage: async () => {
+      throw new Error('claude path should not be reached for opencode sessions');
+    },
+    resolveCodexSessionsDir: () => '/never-touched',
+  });
+
+  assert.equal(result.unsupported, true);
+  assert.match(result.message ?? '', /OpenCode/);
+});
+
 test('getSessionTokenUsage rejects unsafe session ids with an unsupported response', async () => {
   // Defense-in-depth: the route only ever exposes this through a URL param,
   // but we keep the legacy validation to fail closed if a caller passes
