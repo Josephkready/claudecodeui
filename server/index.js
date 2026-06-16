@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import express from 'express';
 import cors from 'cors';
 import mime from 'mime-types';
+import Database from 'better-sqlite3';
 
 import { AppError, WORKSPACES_ROOT, validateWorkspacePath } from '@/shared/utils.js';
 import { shouldExcludeFileTreeEntry } from '@/shared/file-tree-excludes.js';
@@ -50,6 +51,12 @@ import {
     isGeminiSessionActive,
     getActiveGeminiSessions,
 } from './gemini-cli.js';
+import {
+    spawnOpenCode,
+    abortOpenCodeSession,
+    isOpenCodeSessionActive,
+    getActiveOpenCodeSessions,
+} from './opencode-cli.js';
 import sessionManager from './sessionManager.js';
 import {
     stripAnsiSequences,
@@ -71,7 +78,7 @@ import geminiRoutes from './routes/gemini.js';
 import pluginsRoutes from './routes/plugins.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './utils/plugin-process-manager.js';
-import { initializeDatabase, projectsDb } from './modules/database/index.js';
+import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
 import { IS_PLATFORM } from './constants/config.js';
@@ -82,8 +89,16 @@ const __dirname = getModuleDir(import.meta.url);
 // Resolving the app root once keeps every repo-level lookup below aligned across both layouts.
 const APP_ROOT = findAppRoot(__dirname);
 const installMode = fs.existsSync(path.join(APP_ROOT, '.git')) ? 'git' : 'npm';
+const MAX_FILE_UPLOAD_SIZE_MB = 200;
+const MAX_FILE_UPLOAD_SIZE_BYTES = MAX_FILE_UPLOAD_SIZE_MB * 1024 * 1024;
+const MAX_FILE_UPLOAD_COUNT = 20;
 
 console.log('SERVER_PORT from env:', process.env.SERVER_PORT);
+
+function readUsageNumber(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -99,21 +114,25 @@ const wss = createWebSocketServer(server, {
         spawnCursor,
         queryCodex,
         spawnGemini,
+        spawnOpenCode,
         abortClaudeSDKSession,
         abortCursorSession,
         abortCodexSession,
         abortGeminiSession,
+        abortOpenCodeSession,
         resolveToolApproval,
         isClaudeSDKSessionActive,
         isCursorSessionActive,
         isCodexSessionActive,
         isGeminiSessionActive,
+        isOpenCodeSessionActive,
         reconnectSessionWriter,
         getPendingApprovalsForSession,
         getActiveClaudeSDKSessions,
         getActiveCursorSessions,
         getActiveCodexSessions,
         getActiveGeminiSessions,
+        getActiveOpenCodeSessions,
     },
     shell: {
         getSessionById: (sessionId) => sessionManager.getSession(sessionId),
@@ -958,27 +977,27 @@ const uploadFilesHandler = async (req, res) => {
             }
         }),
         limits: {
-            fileSize: 50 * 1024 * 1024, // 50MB limit
-            files: 20 // Max 20 files at once
+            fileSize: MAX_FILE_UPLOAD_SIZE_BYTES,
+            files: MAX_FILE_UPLOAD_COUNT
         }
     });
 
     // Use multer middleware
-    uploadMiddleware.array('files', 20)(req, res, async (err) => {
+    uploadMiddleware.array('files', MAX_FILE_UPLOAD_COUNT)(req, res, async (err) => {
         if (err) {
             console.error('Multer error:', err);
             if (err.code === 'LIMIT_FILE_SIZE') {
-                return res.status(400).json({ error: 'File too large. Maximum size is 50MB.' });
+                return res.status(400).json({ error: `File too large. Maximum size is ${MAX_FILE_UPLOAD_SIZE_MB}MB.` });
             }
             if (err.code === 'LIMIT_FILE_COUNT') {
-                return res.status(400).json({ error: 'Too many files. Maximum is 20 files.' });
+                return res.status(400).json({ error: `Too many files. Maximum is ${MAX_FILE_UPLOAD_COUNT} files.` });
             }
             return res.status(500).json({ error: err.message });
         }
 
         try {
             const { projectId } = req.params;
-            const { targetPath, relativePaths } = req.body;
+            const { targetPath, relativePaths, requestedFileCount: requestedFileCountRaw } = req.body;
 
             // Parse relative paths if provided (for folder uploads)
             let filePaths = [];
@@ -1001,6 +1020,11 @@ const uploadFilesHandler = async (req, res) => {
             if (!req.files || req.files.length === 0) {
                 return res.status(400).json({ error: 'No files provided' });
             }
+
+            const parsedRequestedFileCount = Number.parseInt(requestedFileCountRaw, 10);
+            const requestedFileCount = Number.isFinite(parsedRequestedFileCount) && parsedRequestedFileCount > 0
+                ? parsedRequestedFileCount
+                : req.files.length;
 
             // Resolve the project directory through the DB using the new projectId.
             const projectRoot = await projectsDb.getProjectPathById(projectId);
@@ -1080,8 +1104,10 @@ const uploadFilesHandler = async (req, res) => {
             res.json({
                 success: true,
                 files: uploadedFiles,
+                uploadedCount: uploadedFiles.length,
+                requestedFileCount,
                 targetPath: resolvedTargetDir,
-                message: `Uploaded ${uploadedFiles.length} file(s) successfully`
+                message: `Uploaded ${uploadedFiles.length} ${uploadedFiles.length === 1 ? 'file' : 'files'} successfully`
             });
         } catch (error) {
             console.error('Error uploading files:', error);
@@ -1242,67 +1268,118 @@ function permToRwx(perm) {
     return r + w + x;
 }
 
+const DEFAULT_FS_CONCURRENCY = 64;
+const parsedFsConcurrency = Number.parseInt(process.env.FS_CONCURRENCY || '', 10);
+const FS_CONCURRENCY = Number.isFinite(parsedFsConcurrency) && parsedFsConcurrency > 0
+    ? parsedFsConcurrency
+    : DEFAULT_FS_CONCURRENCY;
+let activeFsOperations = 0;
+const pendingFsOperations = [];
+
+async function acquire() {
+    if (activeFsOperations < FS_CONCURRENCY) {
+        activeFsOperations += 1;
+        return;
+    }
+
+    await new Promise((resolve) => {
+        pendingFsOperations.push(resolve);
+    });
+}
+
+function release() {
+    const next = pendingFsOperations.shift();
+    if (next) {
+        next();
+        return;
+    }
+
+    activeFsOperations = Math.max(0, activeFsOperations - 1);
+}
+
 async function getFileTree(dirPath, maxDepth = 3, currentDepth = 0, showHidden = true) {
     // Using fsPromises from import
-    const items = [];
-
+    let entries;
     try {
-        const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
-
-        for (const entry of entries) {
-            // Skip heavy build / VCS / cache / language-tooling directories.
-            // List lives in server/shared/file-tree-excludes.ts so the
-            // folder-picker and the recursive walk stay in sync.
-            if (shouldExcludeFileTreeEntry(entry.name)) continue;
-
-            const itemPath = path.join(dirPath, entry.name);
-            const item = {
-                name: entry.name,
-                path: itemPath,
-                type: entry.isDirectory() ? 'directory' : 'file'
-            };
-
-            // Get file stats for additional metadata
-            try {
-                const stats = await fsPromises.stat(itemPath);
-                item.size = stats.size;
-                item.modified = stats.mtime.toISOString();
-
-                // Convert permissions to rwx format
-                const mode = stats.mode;
-                const ownerPerm = (mode >> 6) & 7;
-                const groupPerm = (mode >> 3) & 7;
-                const otherPerm = mode & 7;
-                item.permissions = ((mode >> 6) & 7).toString() + ((mode >> 3) & 7).toString() + (mode & 7).toString();
-                item.permissionsRwx = permToRwx(ownerPerm) + permToRwx(groupPerm) + permToRwx(otherPerm);
-            } catch (statError) {
-                // If stat fails, provide default values
-                item.size = 0;
-                item.modified = null;
-                item.permissions = '000';
-                item.permissionsRwx = '---------';
-            }
-
-            if (entry.isDirectory() && currentDepth < maxDepth) {
-                // Recursively get subdirectories but limit depth
-                try {
-                    // Check if we can access the directory before trying to read it
-                    await fsPromises.access(item.path, fs.constants.R_OK);
-                    item.children = await getFileTree(item.path, maxDepth, currentDepth + 1, showHidden);
-                } catch (e) {
-                    // Silently skip directories we can't access (permission denied, etc.)
-                    item.children = [];
-                }
-            }
-
-            items.push(item);
+        await acquire();
+        try {
+            entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
+        } finally {
+            release();
         }
     } catch (error) {
         // Only log non-permission errors to avoid spam
         if (error.code !== 'EACCES' && error.code !== 'EPERM') {
             console.error('Error reading directory:', error);
         }
+        return [];
     }
+
+    // Skip heavy build / VCS / cache / language-tooling entries. The list lives
+    // in server/shared/file-tree-excludes.ts so the folder-picker and this
+    // recursive walk stay in sync.
+    const filteredEntries = entries.filter((entry) => !shouldExcludeFileTreeEntry(entry.name));
+
+    // Process every entry in parallel. On high-latency filesystems (NFS/SMB)
+    // serial stat() was the real bottleneck — issuing them concurrently lets
+    // the kernel pipeline the round-trips and the recursive calls overlap too.
+    const items = await Promise.all(filteredEntries.map(async (entry) => {
+        const itemPath = path.join(dirPath, entry.name);
+        const item = {
+            name: entry.name,
+            path: itemPath,
+            type: entry.isDirectory() ? 'directory' : 'file'
+        };
+
+        // Get file stats for additional metadata
+        try {
+            await acquire();
+            try {
+              const stats = await fsPromises.lstat(itemPath);
+              item.size = stats.size;
+              item.modified = stats.mtime.toISOString();
+
+              // Mark symlinks so UI can distinguish them
+              if (stats.isSymbolicLink()) {
+                item.isSymlink = true;
+              }
+
+              // Convert permissions to rwx format
+              const mode = stats.mode;
+              const ownerPerm = (mode >> 6) & 7;
+              const groupPerm = (mode >> 3) & 7;
+              const otherPerm = mode & 7;
+              item.permissions =
+                ((mode >> 6) & 7).toString() +
+                ((mode >> 3) & 7).toString() +
+                (mode & 7).toString();
+              item.permissionsRwx =
+                permToRwx(ownerPerm) +
+                permToRwx(groupPerm) +
+                permToRwx(otherPerm);
+            } finally {
+                release();
+            }
+        } catch (statError) {
+            // If stat fails, provide default values
+            item.size = 0;
+            item.modified = null;
+            item.permissions = '000';
+            item.permissionsRwx = '---------';
+        }
+
+        if (entry.isDirectory() && currentDepth < maxDepth) {
+            // Recurse. Let readdir's own EACCES bubble up through the catch in
+            // the recursive call rather than doing a separate access() probe
+            // (which doubled the round-trip count on SMB without adding info).
+            // The recursive call starts with a bounded readdir; holding a permit
+            // for the whole subtree can deadlock when sibling directories are
+            // waiting on their own children.
+            item.children = await getFileTree(itemPath, maxDepth, currentDepth + 1, showHidden);
+        }
+
+        return item;
+    }));
 
     return items.sort((a, b) => {
         if (a.type !== b.type) {

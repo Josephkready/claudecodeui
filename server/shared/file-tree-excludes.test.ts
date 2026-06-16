@@ -14,6 +14,14 @@ test('FILE_TREE_EXCLUDED_DIRS includes the high-impact dirs from the dante incid
   }
 });
 
+test('FILE_TREE_EXCLUDED_DIRS keeps the names inherited from the upstream IGNORED_DIRS list', () => {
+  // getFileTree (server/index.js) used to maintain its own IGNORED_DIRS set;
+  // it now defers to this shared list, so these must stay covered.
+  for (const name of ['.parcel-cache', 'vendor', 'coverage', '.nyc_output', '.idea']) {
+    assert.equal(FILE_TREE_EXCLUDED_DIRS.has(name), true, `${name} must be excluded`);
+  }
+});
+
 test('FILE_TREE_EXCLUDED_DIRS does not exclude common user-code dirs', () => {
   // Anything users might actually navigate to via the file picker must NOT
   // be in the set. Anchors against silently-hide-the-users-files regressions.
