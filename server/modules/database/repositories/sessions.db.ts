@@ -95,12 +95,16 @@ export const sessionsDb = {
 
     if (existing) {
       db.prepare(
+        // Fork change: do NOT reset isArchived on re-sync. Upstream sets it to
+        // 0 here, but cloudcli re-syncs every jsonl on startup, which un-archived
+        // everything on each restart and made the archive feature useless for
+        // decluttering. Preserving it (by not touching the column) keeps
+        // archived sessions hidden across restarts; restore via the UI.
         `UPDATE sessions SET
            provider = ?,
            updated_at = COALESCE(?, CURRENT_TIMESTAMP),
            project_path = ?,
            jsonl_path = ?,
-           isArchived = 0,
            custom_name = COALESCE(?, custom_name)
          WHERE session_id = ?`
       ).run(
@@ -127,7 +131,9 @@ export const sessionsDb = {
          updated_at = excluded.updated_at,
          project_path = excluded.project_path,
          jsonl_path = excluded.jsonl_path,
-         isArchived = 0,
+         -- Fork change: preserve isArchived on re-sync (was reset to 0). See
+         -- the UPDATE path above for why: startup re-sync must not un-archive.
+         isArchived = sessions.isArchived,
          custom_name = COALESCE(excluded.custom_name, sessions.custom_name)`
     ).run(
       providerSessionId,
