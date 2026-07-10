@@ -27,6 +27,13 @@ RUN apt-get update \
 
 WORKDIR /build
 
+# Disable the login/setup screen for this single-user dante deploy.
+# VITE_AUTH_DISABLED is a Vite build-time constant, so it must be present during
+# `npm run build` to bake into the frontend bundle. Overridable at build time
+# with `--build-arg VITE_AUTH_DISABLED=false` to restore username/password login.
+ARG VITE_AUTH_DISABLED=true
+ENV VITE_AUTH_DISABLED=${VITE_AUTH_DISABLED}
+
 COPY . .
 RUN npm ci \
  && npm run build
@@ -56,6 +63,12 @@ RUN npm ci \
 # The @openai/codex-sdk path resolves through node_modules, so the
 # @openai/codex-linux-x64 native (~200MB) is intentionally kept.
 FROM node:22-slim
+
+# Carry the same auth-disabled default into the runtime stage: the server reads
+# VITE_AUTH_DISABLED from the environment at startup to bypass login and seed the
+# single default user. Kept in sync with the builder-stage ARG above.
+ARG VITE_AUTH_DISABLED=true
+ENV VITE_AUTH_DISABLED=${VITE_AUTH_DISABLED}
 
 # Runtime apt deps only: git is needed because cloudcli shells out to it for
 # project clone/star operations; ca-certificates for HTTPS. We do NOT install
