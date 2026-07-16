@@ -12,6 +12,8 @@ dist-server/
 dist-ssr/
 build/
 out/
+# Staging tree used by scripts/dante-build.sh; disposable, never committed.
+.dante-build/
 
 # Environment variables
 .env

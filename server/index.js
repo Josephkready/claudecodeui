@@ -71,14 +71,15 @@ import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './util
 import { initializeDatabase, projectsDb } from './modules/database/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
-import { IS_PLATFORM, AUTH_DISABLED } from './constants/config.js';
+import { IS_PLATFORM, AUTH_DISABLED, SELF_UPDATE_DISABLED } from './constants/config.js';
+import { resolveInstallMode, resolveUpdatePlan } from './shared/self-update.js';
 import { c } from './utils/colors.js';
 
 const __dirname = getModuleDir(import.meta.url);
 // The server source runs from /server, while the compiled output runs from /dist-server/server.
 // Resolving the app root once keeps every repo-level lookup below aligned across both layouts.
 const APP_ROOT = findAppRoot(__dirname);
-const installMode = fs.existsSync(path.join(APP_ROOT, '.git')) ? 'git' : 'npm';
+const installMode = resolveInstallMode(fs.existsSync(path.join(APP_ROOT, '.git')));
 // Version of the code that is actually running, captured once at process
 // startup. This intentionally does NOT re-read package.json per request: after
 // an update replaces the files on disk, package.json reflects the NEW version
@@ -285,22 +286,25 @@ app.use(express.static(path.join(APP_ROOT, 'dist'), {
 // System update endpoint
 app.post('/api/system/update', authenticateToken, async (req, res) => {
     try {
-        // Get the project root directory (parent of server directory)
-        const projectRoot = APP_ROOT;
+        // Deployments whose code is owned by something else (config management, an image
+        // rebuild, a package manager) opt out: updating here would race the real owner.
+        if (SELF_UPDATE_DISABLED) {
+            console.log('Rejected system update: SELF_UPDATE_DISABLED is set');
+            return res.status(403).json({
+                success: false,
+                error: 'In-app update is disabled on this deployment.',
+                message: 'This install is managed externally (SELF_UPDATE_DISABLED=true). Update it through whatever deploys it.'
+            });
+        }
 
-        console.log('Starting system update from directory:', projectRoot);
+        const { command: updateCommand, cwd: updateCwd } = resolveUpdatePlan({
+            isPlatform: IS_PLATFORM,
+            installMode,
+            appRoot: APP_ROOT,
+            homeDir: os.homedir()
+        });
 
-        // Platform deployments use their own update workflow from the project root.
-        const updateCommand = IS_PLATFORM
-        // In platform, husky and dev dependencies are not needed
-            ? 'npm run update:platform'
-            : installMode === 'git'
-                ? 'git checkout main && git pull && npm install'
-                : 'npm install -g @cloudcli-ai/cloudcli@latest';
-
-        const updateCwd = IS_PLATFORM || installMode === 'git'
-            ? projectRoot
-            : os.homedir();
+        console.log('Starting system update:', updateCommand, 'in', updateCwd);
 
         const child = spawn('sh', ['-c', updateCommand], {
             cwd: updateCwd,
