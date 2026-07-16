@@ -13,6 +13,12 @@ import {
 } from '@/shared/utils.js';
 import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 
+import {
+  extractTitleCandidatesFromLines,
+  pickDiscoveredSessionName,
+  type SessionTitleCandidates,
+} from './session-title.js';
+
 type ParsedSession = {
   sessionId: string;
   projectPath: string;
@@ -150,10 +156,12 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
       };
     }
 
-    let sessionName = nameMap.get(parsed.sessionId);
-    if (!sessionName) {
-      sessionName = await this.extractSessionAiTitleFromEnd(filePath, parsed.sessionId);
-    }
+    // Claude Code writes model-generated `ai-title` events (and `custom-title` on a
+    // user rename) into the transcript. Prefer those over the raw first-prompt
+    // `display` (nameMap) so the sidebar reads as summaries, not opening lines; the
+    // first prompt stays the fallback when no title event exists.
+    const titleCandidates = await this.extractSessionTitleCandidatesFromEnd(filePath, parsed.sessionId);
+    const sessionName = pickDiscoveredSessionName(titleCandidates, nameMap.get(parsed.sessionId));
 
     return {
       ...parsed,
@@ -161,46 +169,16 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
     };
   }
 
-  private async extractSessionAiTitleFromEnd(
+  private async extractSessionTitleCandidatesFromEnd(
     filePath: string,
     sessionId: string
-  ): Promise<string | undefined> {
+  ): Promise<SessionTitleCandidates> {
     try {
       const content = await readFile(filePath, 'utf8');
-      const lines = content.split(/\r?\n/);
-
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const line = lines[index]?.trim();
-        if (!line) {
-          continue;
-        }
-
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          continue;
-        }
-
-        const data = parsed as Record<string, unknown>;
-        const eventType = typeof data.type === 'string' ? data.type : undefined;
-        const eventSessionId = typeof data.sessionId === 'string' ? data.sessionId : undefined;
-        const aiTitle = typeof data.aiTitle === 'string' ? data.aiTitle : undefined;
-        const lastPrompt = typeof data.lastPrompt === 'string' ? data.lastPrompt : undefined;
-        const claudeRenamedTitle = typeof data.customTitle === 'string' ? data.customTitle : undefined;
-
-        if (
-          (eventType === 'ai-title' && eventSessionId === sessionId && aiTitle?.trim()) ||
-          (eventType === 'last-prompt' && eventSessionId === sessionId && lastPrompt?.trim()) ||
-          (eventType === "custom-title" && eventSessionId === sessionId && claudeRenamedTitle?.trim())
-        ) {
-          return aiTitle || lastPrompt || claudeRenamedTitle;
-        }
-      }
+      return extractTitleCandidatesFromLines(content.split(/\r?\n/), sessionId);
     } catch {
       // Ignore missing/unreadable files so sync can continue.
+      return {};
     }
-
-    return undefined;
   }
 }
