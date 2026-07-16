@@ -167,6 +167,27 @@ async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Prom
   });
 }
 
+/**
+ * Broadcasts a single `session_upserted` delta for one app session id.
+ *
+ * Reuses the same event shape and client fan-out as the filesystem watcher so
+ * out-of-band mutations (e.g. the AI-title worker rewriting `custom_name`) show
+ * up in every sidebar immediately, without a full project-list refetch. No-op
+ * when the id cannot be resolved to an active session row.
+ */
+export async function broadcastSessionUpserted(sessionId: string): Promise<void> {
+  const event = await buildSessionUpsertedEvent(sessionId);
+  if (!event) {
+    return;
+  }
+
+  connectedClients.forEach((client) => {
+    if (client.readyState === WS_OPEN_STATE) {
+      client.send(event);
+    }
+  });
+}
+
 async function flushPendingWatcherUpdate(): Promise<void> {
   clearPendingWatcherFlushTimer();
 

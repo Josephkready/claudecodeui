@@ -9,13 +9,14 @@ type SessionRow = {
   project_path: string | null;
   jsonl_path: string | null;
   custom_name: string | null;
+  name_source: string | null;
   isArchived: number;
   created_at: string;
   updated_at: string;
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, name_source, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -100,12 +101,17 @@ export const sessionsDb = {
         // everything on each restart and made the archive feature useless for
         // decluttering. Preserving it (by not touching the column) keeps
         // archived sessions hidden across restarts; restore via the UI.
+        // custom_name is only refreshed from disk while name_source IS NULL
+        // (a raw, synchronizer-derived title). Once the AI-title worker ('ai')
+        // or a manual UI rename ('user') owns the name, re-sync must leave it
+        // alone — otherwise providers whose synchronizer recomputes the name on
+        // every scan (e.g. Cursor) would silently revert it on the next restart.
         `UPDATE sessions SET
            provider = ?,
            updated_at = COALESCE(?, CURRENT_TIMESTAMP),
            project_path = ?,
            jsonl_path = ?,
-           custom_name = COALESCE(?, custom_name)
+           custom_name = CASE WHEN name_source IS NULL THEN COALESCE(?, custom_name) ELSE custom_name END
          WHERE session_id = ?`
       ).run(
         provider,
@@ -134,7 +140,8 @@ export const sessionsDb = {
          -- Fork change: preserve isArchived on re-sync (was reset to 0). See
          -- the UPDATE path above for why: startup re-sync must not un-archive.
          isArchived = sessions.isArchived,
-         custom_name = COALESCE(excluded.custom_name, sessions.custom_name)`
+         -- Same guard as the UPDATE path: never overwrite an AI- or user-owned title.
+         custom_name = CASE WHEN sessions.name_source IS NULL THEN COALESCE(excluded.custom_name, sessions.custom_name) ELSE sessions.custom_name END`
     ).run(
       providerSessionId,
       provider,
@@ -217,13 +224,60 @@ export const sessionsDb = {
     merge();
   },
 
-  updateSessionCustomName(sessionId: string, customName: string): void {
+  /**
+   * Updates a session's title.
+   *
+   * `source` records who set the name so the AI-title worker knows what it may
+   * rewrite: pass `'user'` for a manual UI rename and `'ai'` for a worker
+   * rewrite (both make the row ineligible for future rewrites). Omit it for
+   * synchronizer-derived titles (e.g. the Codex indexer promoting a placeholder
+   * to a real name) so `name_source` stays NULL and the row remains eligible.
+   */
+  updateSessionCustomName(
+    sessionId: string,
+    customName: string,
+    source?: 'user' | 'ai'
+  ): void {
     const db = getConnection();
+    if (source) {
+      db.prepare(
+        `UPDATE sessions
+         SET custom_name = ?, name_source = ?
+         WHERE session_id = ?`
+      ).run(customName, source, sessionId);
+      return;
+    }
     db.prepare(
       `UPDATE sessions
        SET custom_name = ?
        WHERE session_id = ?`
     ).run(customName, sessionId);
+  },
+
+  /**
+   * Returns raw (synchronizer-derived) titles that are long enough to be worth
+   * shortening, newest first. Rows renamed in the UI (`name_source = 'user'`)
+   * or already rewritten by the worker (`'ai'`) are excluded, as are the
+   * provider "Untitled …" placeholders and archived sessions. `minLength`
+   * gates out already-short titles so the worker never wastes an LM call.
+   */
+  getSessionsNeedingAiTitle(minLength: number, limit: number): SessionRow[] {
+    const db = getConnection();
+    const rows = db
+      .prepare(
+        `SELECT ${SESSION_ROW_COLUMNS}
+         FROM sessions
+         WHERE name_source IS NULL
+           AND custom_name IS NOT NULL
+           AND LENGTH(custom_name) > ?
+           AND custom_name NOT LIKE 'Untitled % Session'
+           AND isArchived = 0
+         ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, session_id DESC
+         LIMIT ?`
+      )
+      .all(minLength, limit) as SessionRow[];
+
+    return normalizeSessionRows(rows);
   },
 
   getSessionById(sessionId: string): SessionRow | null {
