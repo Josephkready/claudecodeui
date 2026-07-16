@@ -131,6 +131,16 @@
     "projectsScanned_one": "{{count}} project scanned",
     "projectsScanned_other": "{{count}} projects scanned"
   },
+  "conversations": {
+    "attentionHeader": "Needs attention",
+    "runningHeader": "Running",
+    "idleHeader": "Recent",
+    "attentionStatus": "Needs attention",
+    "runningStatus": "Working",
+    "runningBadge": "Running sessions",
+    "emptyTitle": "No conversations yet",
+    "emptyDescription": "Start a session from a project and it will appear here."
+  },
   "deleteConfirmation": {
     "deleteProject": "Remove Project",
     "deleteSession": "Delete Session",

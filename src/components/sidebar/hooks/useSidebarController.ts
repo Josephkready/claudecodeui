@@ -132,7 +132,7 @@ export function useSidebarController({
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteProjectConfirmation | null>(null);
   const [sessionDeleteConfirmation, setSessionDeleteConfirmation] = useState<SessionDeleteConfirmation | null>(null);
   const [showVersionModal, setShowVersionModal] = useState(false);
-  const [searchMode, setSearchMode] = useState<SidebarSearchMode>('projects');
+  const [searchMode, setSearchMode] = useState<SidebarSearchMode>('conversations');
   const [conversationResults, setConversationResults] = useState<ConversationSearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(null);
@@ -587,35 +587,9 @@ export function useSidebarController({
     [projectSortOrder, projectsWithResolvedStarState],
   );
 
-  const runningProjects = useMemo(() => {
-    if (activeSessionIds.size === 0) {
-      return [];
-    }
-
-    return sortedProjects.reduce<Project[]>((acc, project) => {
-      const sessions = (project.sessions ?? []).filter((session) => activeSessionIds.has(String(session.id)));
-      const runningCount = sessions.length;
-
-      if (runningCount === 0) {
-        return acc;
-      }
-
-      acc.push({
-        ...project,
-        sessions,
-        sessionMeta: {
-          ...project.sessionMeta,
-          total: runningCount,
-          hasMore: false,
-        },
-      });
-      return acc;
-    }, []);
-  }, [activeSessionIds, sortedProjects]);
-
   const filteredProjects = useMemo(
-    () => filterProjects(searchMode === 'running' ? runningProjects : sortedProjects, debouncedSearchQuery),
-    [debouncedSearchQuery, runningProjects, searchMode, sortedProjects],
+    () => filterProjects(sortedProjects, debouncedSearchQuery),
+    [debouncedSearchQuery, sortedProjects],
   );
 
   const filteredArchivedSessions = useMemo(() => {
