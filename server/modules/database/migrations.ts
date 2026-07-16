@@ -402,6 +402,20 @@ const addProviderSessionIdMapping = (db: Database): void => {
   `);
 };
 
+/**
+ * Adds the `name_source` provenance column used by the AI-title worker.
+ *
+ * Left NULL for existing rows on purpose: the worker treats NULL as
+ * "synchronizer-derived, eligible for a short rewrite", while `'ai'` and
+ * `'user'` mark titles it must not touch. Runs on every upgrade path
+ * (including after a full sessions-table rebuild) and is a no-op once present.
+ */
+const addSessionNameSourceColumn = (db: Database): void => {
+  const sessionsTableInfo = getTableInfo(db, 'sessions');
+  const columnNames = sessionsTableInfo.map((column) => column.name);
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'name_source', 'TEXT');
+};
+
 const ensureProjectsForSessionPaths = (db: Database): void => {
   if (!tableExists(db, 'sessions')) {
     return;
@@ -452,6 +466,7 @@ export const runMigrations = (db: Database) => {
     rebuildSessionsTableWithProjectSchema(db);
     migrateLegacySessionNames(db);
     addProviderSessionIdMapping(db);
+    addSessionNameSourceColumn(db);
     ensureProjectsForSessionPaths(db);
 
     db.exec('CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id)');

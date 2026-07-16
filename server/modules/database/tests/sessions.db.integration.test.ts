@@ -75,6 +75,79 @@ test('createSession preserves archived state on re-sync (fork: startup rescan mu
   });
 });
 
+// Longer than the 60-char default min-length gate, so length is never the
+// reason a row is included/excluded in the eligibility tests below.
+const LONG_TITLE = 'Please investigate why the audio processing backend keeps dropping content on migration';
+const OTHER_LONG_TITLE = 'We are working on a brand new design document for maximizing daily mental performance';
+
+test('getSessionsNeedingAiTitle returns only raw, long, active titles and respects name_source', async () => {
+  await withIsolatedDatabase(() => {
+    const project = '/workspace/titles-project';
+
+    // Raw synchronizer-derived long title -> eligible.
+    sessionsDb.createSession('raw-long', 'claude', project, LONG_TITLE);
+    // Short raw title -> excluded by the length gate.
+    sessionsDb.createSession('raw-short', 'claude', project, 'Fix the bug');
+    // Provider placeholder -> excluded.
+    sessionsDb.createSession('untitled', 'claude', project, 'Untitled Claude Session');
+    // Manually renamed (even though still long) -> excluded.
+    sessionsDb.createSession('user-long', 'claude', project, LONG_TITLE);
+    sessionsDb.updateSessionCustomName('user-long', OTHER_LONG_TITLE, 'user');
+    // Already rewritten by the worker (even if re-set to a long value) -> excluded.
+    sessionsDb.createSession('ai-long', 'claude', project, LONG_TITLE);
+    sessionsDb.updateSessionCustomName('ai-long', OTHER_LONG_TITLE, 'ai');
+    // Archived long raw title -> excluded.
+    sessionsDb.createSession('archived-long', 'claude', project, LONG_TITLE);
+    sessionsDb.updateSessionIsArchived('archived-long', true);
+
+    const eligible = sessionsDb.getSessionsNeedingAiTitle(60, 100);
+    assert.deepEqual(
+      eligible.map((row) => row.session_id),
+      ['raw-long'],
+    );
+  });
+});
+
+test('getSessionsNeedingAiTitle orders newest-first and honors the batch limit', async () => {
+  await withIsolatedDatabase(() => {
+    const project = '/workspace/titles-order';
+    sessionsDb.createSession('older', 'claude', project, LONG_TITLE, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+    sessionsDb.createSession('newer', 'claude', project, OTHER_LONG_TITLE, '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z');
+
+    const firstOnly = sessionsDb.getSessionsNeedingAiTitle(60, 1);
+    assert.deepEqual(firstOnly.map((row) => row.session_id), ['newer']);
+
+    const both = sessionsDb.getSessionsNeedingAiTitle(60, 100);
+    assert.deepEqual(both.map((row) => row.session_id), ['newer', 'older']);
+  });
+});
+
+test('updateSessionCustomName records name_source only when a source is given', async () => {
+  await withIsolatedDatabase(() => {
+    const project = '/workspace/titles-source';
+
+    // No source: synchronizer-style update leaves the row eligible.
+    sessionsDb.createSession('sync-touched', 'claude', project, LONG_TITLE);
+    sessionsDb.updateSessionCustomName('sync-touched', OTHER_LONG_TITLE);
+    let row = sessionsDb.getSessionById('sync-touched');
+    assert.equal(row?.custom_name, OTHER_LONG_TITLE);
+    assert.equal(row?.name_source, null);
+
+    // 'ai' source updates the title and marks it done.
+    sessionsDb.updateSessionCustomName('sync-touched', 'Audio Backend Fix', 'ai');
+    row = sessionsDb.getSessionById('sync-touched');
+    assert.equal(row?.custom_name, 'Audio Backend Fix');
+    assert.equal(row?.name_source, 'ai');
+
+    // 'user' source marks a manual rename.
+    sessionsDb.createSession('renamed', 'claude', project, LONG_TITLE);
+    sessionsDb.updateSessionCustomName('renamed', 'My Notes', 'user');
+    assert.equal(sessionsDb.getSessionById('renamed')?.name_source, 'user');
+
+    assert.equal(sessionsDb.getSessionsNeedingAiTitle(60, 100).length, 0);
+  });
+});
+
 test('repository reads normalize SQLite UTC timestamps to ISO strings', async () => {
   await withIsolatedDatabase(() => {
     sessionsDb.createAppSession('session-timezone', 'claude', '/workspace/demo-project');

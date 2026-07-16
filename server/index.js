@@ -19,7 +19,7 @@ import {
     getRouterBasename,
     injectRouterBasenameIntoHtml,
 } from '@/shared/router-basename.js';
-import { closeSessionsWatcher, initializeSessionsWatcher } from '@/modules/providers/index.js';
+import { closeSessionsWatcher, initializeSessionsWatcher, startAiSessionTitler, stopAiSessionTitler } from '@/modules/providers/index.js';
 import { createWebSocketServer } from '@/modules/websocket/index.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
@@ -1403,6 +1403,9 @@ async function startServer() {
             // Start watching the projects folder for changes
             await initializeSessionsWatcher();
 
+            // Start the AI session-title worker (opt-in; no-op unless enabled)
+            startAiSessionTitler();
+
             // Start server-side plugin processes for enabled plugins
             startEnabledPluginServers().catch(err => {
                 console.error('[Plugins] Error during startup:', err.message);
@@ -1412,6 +1415,11 @@ async function startServer() {
         await closeSessionsWatcher();
         // Clean up plugin processes on shutdown
         const shutdownRuntimeServices = async () => {
+            try {
+                stopAiSessionTitler();
+            } catch (err) {
+                console.error('[AI titles] Error stopping titler during shutdown:', err?.message || err);
+            }
             try {
                 await browserUseService.stopAllSessions();
             } catch (err) {

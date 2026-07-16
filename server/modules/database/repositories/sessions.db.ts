@@ -9,13 +9,14 @@ type SessionRow = {
   project_path: string | null;
   jsonl_path: string | null;
   custom_name: string | null;
+  name_source: string | null;
   isArchived: number;
   created_at: string;
   updated_at: string;
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, name_source, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -217,13 +218,60 @@ export const sessionsDb = {
     merge();
   },
 
-  updateSessionCustomName(sessionId: string, customName: string): void {
+  /**
+   * Updates a session's title.
+   *
+   * `source` records who set the name so the AI-title worker knows what it may
+   * rewrite: pass `'user'` for a manual UI rename and `'ai'` for a worker
+   * rewrite (both make the row ineligible for future rewrites). Omit it for
+   * synchronizer-derived titles (e.g. the Codex indexer promoting a placeholder
+   * to a real name) so `name_source` stays NULL and the row remains eligible.
+   */
+  updateSessionCustomName(
+    sessionId: string,
+    customName: string,
+    source?: 'user' | 'ai'
+  ): void {
     const db = getConnection();
+    if (source) {
+      db.prepare(
+        `UPDATE sessions
+         SET custom_name = ?, name_source = ?
+         WHERE session_id = ?`
+      ).run(customName, source, sessionId);
+      return;
+    }
     db.prepare(
       `UPDATE sessions
        SET custom_name = ?
        WHERE session_id = ?`
     ).run(customName, sessionId);
+  },
+
+  /**
+   * Returns raw (synchronizer-derived) titles that are long enough to be worth
+   * shortening, newest first. Rows renamed in the UI (`name_source = 'user'`)
+   * or already rewritten by the worker (`'ai'`) are excluded, as are the
+   * provider "Untitled …" placeholders and archived sessions. `minLength`
+   * gates out already-short titles so the worker never wastes an LM call.
+   */
+  getSessionsNeedingAiTitle(minLength: number, limit: number): SessionRow[] {
+    const db = getConnection();
+    const rows = db
+      .prepare(
+        `SELECT ${SESSION_ROW_COLUMNS}
+         FROM sessions
+         WHERE name_source IS NULL
+           AND custom_name IS NOT NULL
+           AND LENGTH(custom_name) > ?
+           AND custom_name NOT LIKE 'Untitled % Session'
+           AND isArchived = 0
+         ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, session_id DESC
+         LIMIT ?`
+      )
+      .all(minLength, limit) as SessionRow[];
+
+    return normalizeSessionRows(rows);
   },
 
   getSessionById(sessionId: string): SessionRow | null {

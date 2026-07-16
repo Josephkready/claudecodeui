@@ -302,7 +302,8 @@ export const sessionsService = {
       });
     }
 
-    sessionsDb.updateSessionCustomName(sessionId, summary);
+    // Mark as a manual rename so the AI-title worker never overwrites it.
+    sessionsDb.updateSessionCustomName(sessionId, summary, 'user');
     return { sessionId, summary };
   },
 };
