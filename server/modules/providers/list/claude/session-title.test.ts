@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { pickDiscoveredSessionName } from '@/modules/providers/list/claude/session-title.js';
+import {
+  extractTitleCandidatesFromLines,
+  pickDiscoveredSessionName,
+} from '@/modules/providers/list/claude/session-title.js';
 
 test('a user rename (custom-title) wins over everything', () => {
   assert.equal(
@@ -55,4 +58,53 @@ test('an empty display with no other candidate yields undefined (caller normaliz
 
 test('returns undefined when nothing is available', () => {
   assert.equal(pickDiscoveredSessionName({}, undefined), undefined);
+});
+
+// --- extractTitleCandidatesFromLines (the transcript scan) ---
+
+const S = 'sess-123';
+const line = (obj: object) => JSON.stringify(obj);
+
+test('scan: keeps the most-recent value of each title type (newest-first)', () => {
+  const lines = [
+    line({ type: 'ai-title', aiTitle: 'Old Title', sessionId: S }),
+    line({ type: 'user', text: 'a message', sessionId: S }),
+    line({ type: 'ai-title', aiTitle: 'Newest Title', sessionId: S }),
+    line({ type: 'last-prompt', lastPrompt: 'do the thing', sessionId: S }),
+    line({ type: 'custom-title', customTitle: 'Renamed', sessionId: S }),
+  ];
+  const c = extractTitleCandidatesFromLines(lines, S);
+  assert.equal(c.aiTitle, 'Newest Title'); // not the older 'Old Title'
+  assert.equal(c.lastPrompt, 'do the thing');
+  assert.equal(c.customTitle, 'Renamed');
+});
+
+test('scan: skips events belonging to a different session', () => {
+  const lines = [
+    line({ type: 'ai-title', aiTitle: 'Other Session', sessionId: 'other' }),
+    line({ type: 'ai-title', aiTitle: 'Mine', sessionId: S }),
+  ];
+  assert.equal(extractTitleCandidatesFromLines(lines, S).aiTitle, 'Mine');
+});
+
+test('scan: skips blank and non-JSON lines', () => {
+  const lines = ['', '   ', 'not json {', line({ type: 'ai-title', aiTitle: 'Good', sessionId: S })];
+  assert.equal(extractTitleCandidatesFromLines(lines, S).aiTitle, 'Good');
+});
+
+test('scan: an empty/whitespace title value does not claim the slot', () => {
+  const lines = [
+    line({ type: 'ai-title', aiTitle: 'Real', sessionId: S }),     // older, real
+    line({ type: 'ai-title', aiTitle: '   ', sessionId: S }),      // newer, blank → ignored
+  ];
+  assert.equal(extractTitleCandidatesFromLines(lines, S).aiTitle, 'Real');
+});
+
+test('scan: trims stored values', () => {
+  const lines = [line({ type: 'ai-title', aiTitle: '  Padded Title  ', sessionId: S })];
+  assert.equal(extractTitleCandidatesFromLines(lines, S).aiTitle, 'Padded Title');
+});
+
+test('scan: returns an empty object when there are no title events', () => {
+  assert.deepEqual(extractTitleCandidatesFromLines([line({ type: 'user', text: 'hi', sessionId: S })], S), {});
 });

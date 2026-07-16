@@ -14,6 +14,7 @@ import {
 import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 
 import {
+  extractTitleCandidatesFromLines,
   pickDiscoveredSessionName,
   type SessionTitleCandidates,
 } from './session-title.js';
@@ -172,68 +173,12 @@ export class ClaudeSessionSynchronizer implements IProviderSessionSynchronizer {
     filePath: string,
     sessionId: string
   ): Promise<SessionTitleCandidates> {
-    const candidates: SessionTitleCandidates = {};
-
     try {
       const content = await readFile(filePath, 'utf8');
-      const lines = content.split(/\r?\n/);
-
-      // Scan newest-first and keep the most recent of each title-bearing event
-      // type, so an older `ai-title` isn't shadowed by a more recent `last-prompt`
-      // (the previous single-return scan returned whichever type appeared last).
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        const line = lines[index]?.trim();
-        if (!line) {
-          continue;
-        }
-
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          continue;
-        }
-
-        const data = parsed as Record<string, unknown>;
-        if (data.sessionId !== sessionId) {
-          continue;
-        }
-
-        if (
-          data.type === 'ai-title'
-          && candidates.aiTitle === undefined
-          && typeof data.aiTitle === 'string'
-          && data.aiTitle.trim()
-        ) {
-          candidates.aiTitle = data.aiTitle;
-        } else if (
-          data.type === 'custom-title'
-          && candidates.customTitle === undefined
-          && typeof data.customTitle === 'string'
-          && data.customTitle.trim()
-        ) {
-          candidates.customTitle = data.customTitle;
-        } else if (
-          data.type === 'last-prompt'
-          && candidates.lastPrompt === undefined
-          && typeof data.lastPrompt === 'string'
-          && data.lastPrompt.trim()
-        ) {
-          candidates.lastPrompt = data.lastPrompt;
-        }
-
-        if (
-          candidates.aiTitle !== undefined
-          && candidates.customTitle !== undefined
-          && candidates.lastPrompt !== undefined
-        ) {
-          break;
-        }
-      }
+      return extractTitleCandidatesFromLines(content.split(/\r?\n/), sessionId);
     } catch {
       // Ignore missing/unreadable files so sync can continue.
+      return {};
     }
-
-    return candidates;
   }
 }
