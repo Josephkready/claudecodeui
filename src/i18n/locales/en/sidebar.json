@@ -136,7 +136,9 @@
     "runningStatus": "Working",
     "runningBadge": "Running sessions",
     "emptyTitle": "No conversations yet",
-    "emptyDescription": "Start a session from a project and it will appear here."
+    "emptyDescription": "Start a session from a project and it will appear here.",
+    "markAllRead": "Mark all read",
+    "markAllReadTooltip": "Dismiss all attention flags. Sessions still blocked on you stay flagged."
   },
   "deleteConfirmation": {
     "deleteProject": "Remove Project",
