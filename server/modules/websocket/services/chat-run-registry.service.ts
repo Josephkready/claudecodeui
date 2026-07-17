@@ -36,6 +36,23 @@ type ChatRun = {
   writer: ChatSessionWriter;
   startedAt: number;
   completedAt: number | null;
+  /**
+   * When the run first entered a blocked/awaiting-input state (a permission
+   * prompt or plan-mode approval), else `null`. Surfaced as `blocked` in
+   * `listRunningRuns()` so the sidebar ranks a blocked-but-running session as
+   * "needs attention". Stored as a timestamp for a future "blocked for Ns"
+   * display; today only its presence is read.
+   */
+  awaitingInputSince: number | null;
+  /**
+   * Number of tool approvals currently outstanding for the run. A single turn
+   * can have several `canUseTool` awaits in flight at once, so blocked state is
+   * refcounted: `awaitingInputSince` is stamped when the count goes 0->1 and
+   * cleared only when the last approval resolves (count -> 0). A plain boolean
+   * would clear early the moment the first of several concurrent approvals
+   * resolved, wrongly dropping the run back to "running" while still waiting.
+   */
+  pendingApprovalCount: number;
 };
 
 /**
@@ -197,6 +214,29 @@ function recordProviderSessionId(run: ChatRun, providerSessionId: string): void 
 }
 
 /**
+ * Refcounted block/unblock for a run. `blocked=true` when a `canUseTool`
+ * approval starts waiting, `false` when it resolves. `awaitingInputSince` (read
+ * as `blocked` in `listRunningRuns()`) is stamped when the first approval
+ * begins waiting and cleared only when the last outstanding approval resolves —
+ * so a run with two concurrent approvals stays blocked until both are answered,
+ * instead of clearing the moment the first one resolves.
+ */
+function setRunBlocked(run: ChatRun, blocked: boolean): void {
+  if (blocked) {
+    run.pendingApprovalCount += 1;
+    if (run.awaitingInputSince === null) {
+      run.awaitingInputSince = Date.now();
+    }
+    return;
+  }
+
+  run.pendingApprovalCount = Math.max(0, run.pendingApprovalCount - 1);
+  if (run.pendingApprovalCount === 0) {
+    run.awaitingInputSince = null;
+  }
+}
+
+/**
  * Registry of live provider runs keyed by the stable app session id.
  *
  * The registry is what makes the websocket protocol provider-independent:
@@ -231,6 +271,8 @@ export const chatRunRegistry = {
       writer: null as unknown as ChatSessionWriter,
       startedAt: Date.now(),
       completedAt: null,
+      awaitingInputSince: null,
+      pendingApprovalCount: 0,
     };
 
     run.writer = new ChatSessionWriter({
@@ -240,6 +282,9 @@ export const chatRunRegistry = {
       providerSessionId: input.providerSessionId,
       onProviderSessionId: (providerSessionId) => {
         recordProviderSessionId(run, providerSessionId);
+      },
+      onBlockedChange: (blocked) => {
+        setRunBlocked(run, blocked);
       },
       decorateOutboundEvent: (message) => decorateAndRecordEvent(run, message),
     });
@@ -261,6 +306,7 @@ export const chatRunRegistry = {
     provider: LLMProvider;
     startedAt: number;
     lastSeq: number;
+    blocked: boolean;
   }> {
     return Array.from(runs.values())
       .filter((run) => run.status === 'running')
@@ -269,6 +315,7 @@ export const chatRunRegistry = {
         provider: run.provider,
         startedAt: run.startedAt,
         lastSeq: run.lastSeq,
+        blocked: run.awaitingInputSince !== null,
       }));
   },
 

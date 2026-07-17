@@ -199,6 +199,42 @@ test('listRunningRuns returns only currently running app sessions', async () => 
   });
 });
 
+test('listRunningRuns reports blocked and refcounts concurrent approvals', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('app-run-blocked', 'claude', '/workspace/demo');
+    const connection = new FakeConnection();
+    const run = chatRunRegistry.startRun({
+      appSessionId: 'app-run-blocked',
+      provider: 'claude',
+      providerSessionId: null,
+      connection,
+      userId: null,
+    });
+    assert.ok(run);
+
+    const blocked = () => chatRunRegistry.listRunningRuns()[0]?.blocked;
+
+    // Defaults to not blocked.
+    assert.equal(blocked(), false);
+
+    // A single approval flips it on, then off.
+    run.writer.setBlocked(true);
+    assert.equal(blocked(), true);
+    run.writer.setBlocked(false);
+    assert.equal(blocked(), false);
+
+    // Two concurrent approvals: the first to resolve must NOT clear the flag
+    // while the second is still pending (refcounted, not last-writer-wins).
+    run.writer.setBlocked(true);
+    run.writer.setBlocked(true);
+    assert.equal(blocked(), true);
+    run.writer.setBlocked(false);
+    assert.equal(blocked(), true);
+    run.writer.setBlocked(false);
+    assert.equal(blocked(), false);
+  });
+});
+
 test('replayEvents returns only events after the requested seq', async () => {
   await withIsolatedDatabase(() => {
     sessionsDb.createAppSession('app-run-4', 'claude', '/workspace/demo');

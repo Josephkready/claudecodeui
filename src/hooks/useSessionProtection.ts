@@ -9,6 +9,12 @@ export interface SessionActivity {
    * the elapsed-time display and the stale `chat_subscribed` idle-ack guard.
    */
   startedAt: number;
+  /**
+   * Server-authoritative flag: the run is blocked waiting on the user (a
+   * permission prompt or plan-mode approval). Ranks the session as "needs
+   * attention" in any tab, independent of which client started the run.
+   */
+  blocked: boolean;
 }
 
 export type SessionActivityMap = ReadonlyMap<string, SessionActivity>;
@@ -18,6 +24,7 @@ export type SessionActivitySnapshot = {
   statusText?: string | null;
   canInterrupt?: boolean;
   startedAt?: number;
+  blocked?: boolean;
 };
 
 export type MarkSessionProcessing = (
@@ -36,7 +43,7 @@ export type SyncProcessingSessions = (
 
 const LOCAL_ACTIVITY_GRACE_MS = 10_000;
 
-const sessionActivityMapsMatch = (
+export const sessionActivityMapsMatch = (
   left: ReadonlyMap<string, SessionActivity>,
   right: ReadonlyMap<string, SessionActivity>,
 ): boolean => {
@@ -51,6 +58,7 @@ const sessionActivityMapsMatch = (
       || leftActivity.statusText !== rightActivity.statusText
       || leftActivity.canInterrupt !== rightActivity.canInterrupt
       || leftActivity.startedAt !== rightActivity.startedAt
+      || leftActivity.blocked !== rightActivity.blocked
     ) {
       return false;
     }
@@ -84,6 +92,7 @@ export function useSessionProtection() {
           activity?.statusText !== undefined ? activity.statusText : existing?.statusText ?? null,
         canInterrupt: activity?.canInterrupt ?? existing?.canInterrupt ?? true,
         startedAt: existing?.startedAt ?? Date.now(),
+        blocked: existing?.blocked ?? false,
       };
 
       if (
@@ -150,6 +159,7 @@ export function useSessionProtection() {
             snapshot.statusText !== undefined ? snapshot.statusText : existing?.statusText ?? null,
           canInterrupt: snapshot.canInterrupt ?? existing?.canInterrupt ?? true,
           startedAt: snapshotStartedAt ?? existing?.startedAt ?? now,
+          blocked: snapshot.blocked ?? existing?.blocked ?? false,
         });
       }
 
