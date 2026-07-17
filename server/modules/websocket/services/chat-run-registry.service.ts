@@ -37,12 +37,22 @@ type ChatRun = {
   startedAt: number;
   completedAt: number | null;
   /**
-   * When the run entered a blocked/awaiting-input state (a permission prompt or
-   * plan-mode approval), else `null`. Surfaced in `listRunningRuns()` so the
-   * sidebar ranks a blocked-but-running session as "needs attention". Stored as
-   * a timestamp for a future "blocked for Ns" display; only presence matters now.
+   * When the run first entered a blocked/awaiting-input state (a permission
+   * prompt or plan-mode approval), else `null`. Surfaced as `blocked` in
+   * `listRunningRuns()` so the sidebar ranks a blocked-but-running session as
+   * "needs attention". Stored as a timestamp for a future "blocked for Ns"
+   * display; today only its presence is read.
    */
   awaitingInputSince: number | null;
+  /**
+   * Number of tool approvals currently outstanding for the run. A single turn
+   * can have several `canUseTool` awaits in flight at once, so blocked state is
+   * refcounted: `awaitingInputSince` is stamped when the count goes 0->1 and
+   * cleared only when the last approval resolves (count -> 0). A plain boolean
+   * would clear early the moment the first of several concurrent approvals
+   * resolved, wrongly dropping the run back to "running" while still waiting.
+   */
+  pendingApprovalCount: number;
 };
 
 /**
@@ -204,12 +214,26 @@ function recordProviderSessionId(run: ChatRun, providerSessionId: string): void 
 }
 
 /**
- * Marks a run as blocked (awaiting user input on a permission/plan approval) or
- * clears it. The value is a timestamp so a future UI can show "blocked for Ns";
- * today only its presence is read (as `blocked` in `listRunningRuns()`).
+ * Refcounted block/unblock for a run. `blocked=true` when a `canUseTool`
+ * approval starts waiting, `false` when it resolves. `awaitingInputSince` (read
+ * as `blocked` in `listRunningRuns()`) is stamped when the first approval
+ * begins waiting and cleared only when the last outstanding approval resolves —
+ * so a run with two concurrent approvals stays blocked until both are answered,
+ * instead of clearing the moment the first one resolves.
  */
 function setRunBlocked(run: ChatRun, blocked: boolean): void {
-  run.awaitingInputSince = blocked ? Date.now() : null;
+  if (blocked) {
+    run.pendingApprovalCount += 1;
+    if (run.awaitingInputSince === null) {
+      run.awaitingInputSince = Date.now();
+    }
+    return;
+  }
+
+  run.pendingApprovalCount = Math.max(0, run.pendingApprovalCount - 1);
+  if (run.pendingApprovalCount === 0) {
+    run.awaitingInputSince = null;
+  }
 }
 
 /**
@@ -248,6 +272,7 @@ export const chatRunRegistry = {
       startedAt: Date.now(),
       completedAt: null,
       awaitingInputSince: null,
+      pendingApprovalCount: 0,
     };
 
     run.writer = new ChatSessionWriter({

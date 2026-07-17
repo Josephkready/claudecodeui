@@ -43,7 +43,7 @@ export type SyncProcessingSessions = (
 
 const LOCAL_ACTIVITY_GRACE_MS = 10_000;
 
-const sessionActivityMapsMatch = (
+export const sessionActivityMapsMatch = (
   left: ReadonlyMap<string, SessionActivity>,
   right: ReadonlyMap<string, SessionActivity>,
 ): boolean => {

@@ -84,6 +84,14 @@ test('a running session the server marks blocked ranks as attention', () => {
   assert.deepEqual(list.map((item) => item.status), ['attention', 'running']);
 });
 
+test('a session both blocked and flagged for attention still ranks as attention', () => {
+  const p = project('p1', [session('s', '2026-07-16T00:00:00Z')]);
+
+  const list = buildConversationList([p], blockedSessions('s'), new Set(['s']));
+
+  assert.equal(list[0].status, 'attention');
+});
+
 test('flattens across projects and ranks globally', () => {
   const projectA = project('A', [session('a-idle', '2026-07-16T05:00:00Z')]);
   const projectB = project('B', [
