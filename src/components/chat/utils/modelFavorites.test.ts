@@ -49,8 +49,9 @@ test('ignores malformed stored values', () => {
   assert.deepEqual(readFavoriteModelIds('claude'), []);
   store['claude-favorite-models'] = JSON.stringify({ not: 'an array' });
   assert.deepEqual(readFavoriteModelIds('claude'), []);
-  store['claude-favorite-models'] = JSON.stringify(['ok', 3, '', null]);
-  assert.deepEqual(readFavoriteModelIds('claude'), ['ok']);
+  // Drops every non-string / empty-string entry, keeping only usable ids.
+  store['claude-favorite-models'] = JSON.stringify(['ok', 3, '', null, true, { m: 1 }, 'also']);
+  assert.deepEqual(readFavoriteModelIds('claude'), ['ok', 'also']);
 });
 
 test('sorts favorites first while preserving catalog order within each group', () => {
@@ -69,4 +70,18 @@ test('returns the input unchanged when there are no favorites', () => {
   const options = [{ value: 'm1' }, { value: 'm2' }];
   const sorted = sortModelsByFavorite(options, new Set());
   assert.equal(sorted, options);
+});
+
+test('ignores favorite ids that are not in the option list', () => {
+  const options = [{ value: 'm1' }, { value: 'm2' }];
+  // 'gone' is a stale favorite (e.g. a model removed from the catalog); it must
+  // not appear or duplicate anything — only 'm2' floats up.
+  const sorted = sortModelsByFavorite(options, new Set(['gone', 'm2']));
+  assert.deepEqual(sorted.map((o) => o.value), ['m2', 'm1']);
+});
+
+test('does not mutate the source array', () => {
+  const options = [{ value: 'm1' }, { value: 'm2' }, { value: 'm3' }];
+  sortModelsByFavorite(options, new Set(['m3']));
+  assert.deepEqual(options.map((o) => o.value), ['m1', 'm2', 'm3']);
 });

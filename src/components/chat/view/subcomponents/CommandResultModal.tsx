@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BadgeCheck,
@@ -258,7 +258,15 @@ function ModelsContent({
   const [favoriteModelIds, setFavoriteModelIds] = useState<Set<string>>(
     () => new Set(readFavoriteModelIds(currentProvider)),
   );
+  // The lazy initializer already seeded favorites for the initial provider;
+  // only re-read when the active provider actually changes, to avoid a
+  // redundant read + re-render every time the modal mounts.
+  const loadedProviderRef = useRef(currentProvider);
   useEffect(() => {
+    if (loadedProviderRef.current === currentProvider) {
+      return;
+    }
+    loadedProviderRef.current = currentProvider;
     setFavoriteModelIds(new Set(readFavoriteModelIds(currentProvider)));
   }, [currentProvider]);
   const toggleFavoriteModel = useCallback((modelId: string) => {
