@@ -11,7 +11,7 @@ import type {
   ProjectSession,
 } from '../types/app';
 
-import { isAttentionEventKind } from './attentionEvents';
+import { isAttentionEventKind, shouldMarkAttentionForUpsert } from './attentionEvents';
 import type { SessionActivityMap } from './useSessionProtection';
 
 type UseProjectsStateArgs = {
@@ -681,13 +681,13 @@ export function useProjectsState({
         && !activeSessionsRef.current.has(upsert.sessionId)
       ) {
         setExternalMessageUpdate((prev) => prev + 1);
-      } else if (!activeSessionsRef.current.has(upsert.sessionId)) {
-        // A transcript write only warrants attention when the session is NOT
-        // currently running. A running background session flushes its transcript
-        // constantly; flagging it here is the same still-running misfire as the
-        // streaming events above. `activeSessions` mirrors the server's running
-        // registry (refreshed every 5s), so this excludes live runs while still
-        // surfacing sessions changed out-of-band (another client / the CLI).
+      } else if (
+        shouldMarkAttentionForUpsert(upsert.sessionId, activeSessionsRef.current, viewedSessionId)
+      ) {
+        // Only a transcript write from a session that is NOT currently running
+        // warrants attention — a live background run flushes its transcript
+        // constantly, and flagging that is the same still-running misfire as the
+        // streaming events above. See shouldMarkAttentionForUpsert.
         markSessionAttention(upsert.sessionId);
       }
 
