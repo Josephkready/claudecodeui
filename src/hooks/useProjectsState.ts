@@ -11,6 +11,7 @@ import type {
   ProjectSession,
 } from '../types/app';
 
+import { isAttentionEventKind } from './attentionEvents';
 import type { SessionActivityMap } from './useSessionProtection';
 
 type UseProjectsStateArgs = {
@@ -648,16 +649,15 @@ export function useProjectsState({
         : null;
       const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
 
+      // Only genuine "the agent needs you now" signals promote a background
+      // session to the attention band — a finished run or a blocked prompt. In
+      // particular, streaming kinds (stream_delta/text/thinking/tool_use/…) are
+      // NOT attention: they fire while the agent is actively running, and
+      // marking them made a still-running session look blocked (#44).
       if (
         eventSessionId
         && eventSessionId !== viewedSessionId
-        && event.kind !== 'chat_subscribed'
-        && event.kind !== 'loading_progress'
-        && event.kind !== 'session_upserted'
-        && event.kind !== 'status'
-        && event.kind !== 'stream_end'
-        && event.kind !== 'permission_cancelled'
-        && event.kind !== 'websocket_reconnected'
+        && isAttentionEventKind(event.kind)
       ) {
         markSessionAttention(eventSessionId);
       }
@@ -681,7 +681,13 @@ export function useProjectsState({
         && !activeSessionsRef.current.has(upsert.sessionId)
       ) {
         setExternalMessageUpdate((prev) => prev + 1);
-      } else {
+      } else if (!activeSessionsRef.current.has(upsert.sessionId)) {
+        // A transcript write only warrants attention when the session is NOT
+        // currently running. A running background session flushes its transcript
+        // constantly; flagging it here is the same still-running misfire as the
+        // streaming events above. `activeSessions` mirrors the server's running
+        // registry (refreshed every 5s), so this excludes live runs while still
+        // surfacing sessions changed out-of-band (another client / the CLI).
         markSessionAttention(upsert.sessionId);
       }
 
