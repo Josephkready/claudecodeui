@@ -1121,7 +1121,7 @@ Generate the commit message:`;
  * @param {string} text - Raw AI response
  * @returns {string} Clean commit message
  */
-function cleanCommitMessage(text) {
+export function cleanCommitMessage(text) {
   if (!text || !text.trim()) {
     return '';
   }

@@ -107,8 +107,21 @@ export class ResponseCollector {
    * generation). Returns '' when the run produced no assistant text.
    */
   getAssistantText() {
-    return this.getAssistantMessages()
+    const text = this.getAssistantMessages()
       .map((msg) => (typeof msg.content === 'string' ? msg.content : ''))
+      .join('');
+    if (text) {
+      return text;
+    }
+
+    // Some providers stream their reply only as incremental `stream_delta`
+    // chunks and never emit a terminal `{ kind:'text', role:'assistant' }` frame
+    // during a live run (e.g. Cursor's live path). When no assistant text frame
+    // was seen, fall back to concatenating those deltas so the reply isn't lost.
+    return this.messages
+      .map(toMessageObject)
+      .filter((msg) => msg && msg.kind === 'stream_delta' && typeof msg.content === 'string')
+      .map((msg) => msg.content)
       .join('');
   }
 
