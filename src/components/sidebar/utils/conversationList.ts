@@ -5,20 +5,22 @@ import type { SessionWithProvider } from '../types/types';
 import { getAllSessions, getSessionDate } from './utils';
 
 /**
- * Attention-ranked status for a conversation row in the unified Conversations
- * view. Mirrors the herdr "what needs me now" ordering: a session waiting on the
- * user (`attention`) outranks one actively processing (`running`), which
- * outranks everything dormant (`idle`).
+ * Durable "what needs me now" status for a conversation row. Ordered
+ * Blocked > Done > Running > Recent: a run waiting on my input beats one that
+ * finished and I haven't looked at, which beats one still working, which beats
+ * anything old/reviewed. Derived from server-authoritative state (the live
+ * `blocked` flag + persisted `last_completed_at`/`last_viewed_at`), not a
+ * per-tab ephemeral set — so it's the same on every device and survives reload.
  */
-export type ConversationStatus = 'attention' | 'running' | 'idle';
+export type ConversationStatus = 'blocked' | 'done' | 'running' | 'recent';
 
 export type ConversationListItem = {
   project: Project;
   session: SessionWithProvider;
   status: ConversationStatus;
   /**
-   * True while a run is live for this session. Distinct from `status`, which
-   * reclassifies a blocked-but-running session as `attention` (not `running`);
+   * True while a run is live for this session (running OR blocked-but-running).
+   * Distinct from `status` (a blocked run ranks `blocked`, not `running`);
    * consumers that must know "is a run in flight" (e.g. to hide the delete
    * action) key off this, not the ranking band.
    */
@@ -27,11 +29,12 @@ export type ConversationListItem = {
   activityTime: number;
 };
 
-// Lower number sorts first. attention > running > idle.
+// Lower number sorts first: Blocked > Done > Running > Recent.
 const STATUS_RANK: Record<ConversationStatus, number> = {
-  attention: 0,
-  running: 1,
-  idle: 2,
+  blocked: 0,
+  done: 1,
+  running: 2,
+  recent: 3,
 };
 
 // Single source of truth for band order: the render layer derives its section
@@ -39,47 +42,70 @@ const STATUS_RANK: Record<ConversationStatus, number> = {
 export const STATUS_ORDER: ConversationStatus[] = (Object.keys(STATUS_RANK) as ConversationStatus[])
   .sort((a, b) => STATUS_RANK[a] - STATUS_RANK[b]);
 
+/**
+ * A session is "Done" when its last run finished after the last time it was
+ * viewed (or it was never viewed) — a durable finished-but-unseen signal. The
+ * currently-open session is never Done: you're looking at it, so it must not
+ * flash Done if a run completes while it's on screen (the persisted
+ * `last_viewed_at` catches up on the next open, and the client bumps it
+ * optimistically on select).
+ */
+export function isSessionDone(
+  session: SessionWithProvider,
+  selectedSessionId: string | null,
+): boolean {
+  const completed = session.last_completed_at;
+  if (!completed) {
+    return false;
+  }
+  if (selectedSessionId !== null && String(session.id) === selectedSessionId) {
+    return false;
+  }
+  const viewed = session.last_viewed_at;
+  // Both are canonical ISO strings, so a lexicographic compare is chronological.
+  return !viewed || completed > viewed;
+}
+
 function resolveStatus(
-  sessionId: string,
+  session: SessionWithProvider,
   activeSessions: SessionActivityMap,
-  attentionSessionIds: ReadonlySet<string>,
+  selectedSessionId: string | null,
 ): ConversationStatus {
-  // Attention wins over running: a blocked/finished session the user hasn't
-  // looked at yet is more urgent than one still churning.
-  //
-  // A running session the server reports as blocked (waiting on a permission
-  // prompt or plan-mode approval) is attention in any tab — independent of
-  // which client started it and of the FS-watcher attention heuristic.
+  const sessionId = String(session.id);
+  // A live run the server reports as blocked (waiting on a permission prompt or
+  // plan-mode approval) needs me now — in any tab, regardless of who started it.
   if (activeSessions.get(sessionId)?.blocked) {
-    return 'attention';
+    return 'blocked';
   }
-  if (attentionSessionIds.has(sessionId)) {
-    return 'attention';
-  }
+  // Actively working, no action needed from me.
   if (activeSessions.has(sessionId)) {
     return 'running';
   }
-  return 'idle';
+  // Finished and not yet reviewed.
+  if (isSessionDone(session, selectedSessionId)) {
+    return 'done';
+  }
+  return 'recent';
 }
 
 /**
- * Flatten every project's loaded sessions into a single attention-ranked list.
+ * Flatten every project's loaded sessions into a single status-ranked list.
  *
  * Only the sessions already loaded onto each project are considered (the first
- * page from `/api/projects`), which always includes the recent — i.e. attention
- * and running — sessions. The idle tail of very long projects may be truncated;
- * a dedicated cross-project endpoint would remove that limit (planned follow-up).
+ * page from `/api/projects`), which always includes the recent — i.e. blocked,
+ * done, and running — sessions. The reviewed tail of very long projects may be
+ * truncated; a dedicated cross-project endpoint would remove that limit.
  */
 export function buildConversationList(
   projects: Project[],
   activeSessions: SessionActivityMap,
-  attentionSessionIds: ReadonlySet<string>,
+  selectedSessionId: string | null,
 ): ConversationListItem[] {
   const items: ConversationListItem[] = [];
 
   for (const project of projects) {
     for (const session of getAllSessions(project)) {
-      const status = resolveStatus(String(session.id), activeSessions, attentionSessionIds);
+      const status = resolveStatus(session, activeSessions, selectedSessionId);
       items.push({
         project,
         session,

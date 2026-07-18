@@ -10,7 +10,7 @@ import type { Project } from '../../../../types/app';
 import SidebarConversationsList from './SidebarConversationsList';
 
 // Regression coverage for the delete-gate footgun: a blocked-but-running session
-// ranks as `attention` (not `running`), so gating the archive/delete button on
+// ranks as `blocked` (not `running`), so gating the archive/delete button on
 // the ranking band would expose it for an in-flight session. The button must be
 // gated on the live-run flag instead. These render the real component and assert
 // the button's presence in the static markup.
@@ -36,8 +36,6 @@ function render(activeSessions: SessionActivityMap, sessionId: string): string {
     React.createElement(SidebarConversationsList, {
       projects: [projectWith(sessionId)],
       activeSessions,
-      attentionSessionIds: new Set<string>(),
-      onClearAllAttention: noop,
       selectedSession: null,
       currentTime: new Date('2026-07-17T00:00:00Z'),
       onSelect: noop,
@@ -57,7 +55,7 @@ function render(activeSessions: SessionActivityMap, sessionId: string): string {
 }
 
 test('hides the archive/delete button for a blocked-but-running session', () => {
-  // Blocked run: present in activeSessions with blocked=true → ranks `attention`,
+  // Blocked run: present in activeSessions with blocked=true → ranks `blocked`,
   // isActive=true → destructive action must be absent from the DOM.
   const html = render(new Map([['s', activity(true)]]), 's');
   assert.ok(html.includes('tooltips.editSessionName'), 'rename button should still render');
@@ -81,8 +79,6 @@ test('renders a New conversation button in the empty state (no projects/sessions
     React.createElement(SidebarConversationsList, {
       projects: [],
       activeSessions: new Map(),
-      attentionSessionIds: new Set<string>(),
-      onClearAllAttention: noop,
       selectedSession: null,
       currentTime: new Date('2026-07-17T00:00:00Z'),
       onSelect: noop,
