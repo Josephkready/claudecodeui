@@ -69,9 +69,19 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
   // First pass: collect tool results for attachment
   const toolResultMap = new Map<string, NormalizedMessage>();
   const toolUseIds = new Set<string>();
+  // Tool ids whose result is already carried inline on a specific tool_use.
+  // A single Codex apply_patch touching N files expands into N Edits that all
+  // reuse one call_id, and the provider attaches the one shared result to just
+  // the last of them (attachCodexToolResults). Without this guard the fallback
+  // map below would re-attach that same standalone result to the other N-1
+  // Edits too, rendering the result block once per file (#119).
+  const inlineResultToolIds = new Set<string>();
   for (const msg of messages) {
     if (msg.kind === 'tool_use' && msg.toolId) {
       toolUseIds.add(msg.toolId);
+      if (msg.toolResult) {
+        inlineResultToolIds.add(msg.toolId);
+      }
     }
 
     if (msg.kind === 'tool_result' && msg.toolId) {
@@ -142,7 +152,15 @@ export function normalizedToChatMessages(messages: NormalizedMessage[]): ChatMes
       }
 
       case 'tool_use': {
-        const tr = msg.toolResult || (msg.toolId ? toolResultMap.get(msg.toolId) : null);
+        // Prefer an inline result; otherwise fall back to the standalone
+        // tool_result map — but skip that fallback when another tool_use sharing
+        // this call_id already owns the result inline, so a multi-file patch's
+        // result renders only on that owner Edit, not on every file (#119).
+        const tr =
+          msg.toolResult ||
+          (msg.toolId && !inlineResultToolIds.has(msg.toolId)
+            ? toolResultMap.get(msg.toolId)
+            : null);
         const isSubagentContainer = msg.toolName === 'Task';
 
         // Build child tools from subagentTools

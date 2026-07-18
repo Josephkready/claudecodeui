@@ -84,3 +84,39 @@ test('a tool_use with no matching result is left untouched', () => {
 
   assert.equal(orphan.toolResult, undefined);
 });
+
+test('when a call_id has multiple results, the last one in transcript order wins', () => {
+  const use = toolUse('call-1', 'src/a.ts');
+  const normalized: NormalizedMessage[] = [
+    use,
+    toolResult('call-1', 'first output'),
+    toolResult('call-1', 'second output'),
+  ];
+
+  attachCodexToolResults(normalized);
+
+  assert.deepEqual(use.toolResult, { content: 'second output', isError: false });
+});
+
+test('interleaved multi-file patches keep each call_id result on its own last Edit', () => {
+  // Two apply_patch calls whose Edits interleave in transcript order.
+  const a1 = toolUse('call-1', 'src/a1.ts');
+  const b1 = toolUse('call-2', 'src/b1.ts');
+  const a2 = toolUse('call-1', 'src/a2.ts');
+  const b2 = toolUse('call-2', 'src/b2.ts');
+  const normalized: NormalizedMessage[] = [
+    a1,
+    b1,
+    a2,
+    b2,
+    toolResult('call-1', 'patch 1 done'),
+    toolResult('call-2', 'patch 2 done'),
+  ];
+
+  attachCodexToolResults(normalized);
+
+  assert.equal(a1.toolResult, undefined);
+  assert.equal(b1.toolResult, undefined);
+  assert.deepEqual(a2.toolResult, { content: 'patch 1 done', isError: false });
+  assert.deepEqual(b2.toolResult, { content: 'patch 2 done', isError: false });
+});
