@@ -4,6 +4,7 @@ import { useTheme } from '../../../contexts/ThemeContext';
 import { authenticatedFetch } from '../../../utils/api';
 import { setNotificationSoundEnabled } from '../../../utils/notificationSound';
 import { useProviderAuthStatus } from '../../provider-auth/hooks/useProviderAuthStatus';
+import { normalizeMainTab } from '../utils/settingsTabs';
 import {
   DEFAULT_CODE_EDITOR_SETTINGS,
   DEFAULT_CURSOR_PERMISSIONS,
@@ -53,17 +54,6 @@ type NotificationPreferencesResponse = {
 };
 
 type ActiveLoginProvider = AgentProvider | '';
-
-const KNOWN_MAIN_TABS: SettingsMainTab[] = ['agents', 'appearance', 'git', 'api', 'tasks', 'notifications', 'plugins', 'about'];
-
-const normalizeMainTab = (tab: string): SettingsMainTab => {
-  // Keep backwards compatibility with older callers that still pass "tools".
-  if (tab === 'tools') {
-    return 'agents';
-  }
-
-  return KNOWN_MAIN_TABS.includes(tab as SettingsMainTab) ? (tab as SettingsMainTab) : 'agents';
-};
 
 const parseJson = <T>(value: string | null, fallback: T): T => {
   if (!value) {
