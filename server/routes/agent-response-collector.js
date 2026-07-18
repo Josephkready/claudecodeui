@@ -82,6 +82,8 @@ export class ResponseCollector {
         continue;
       }
 
+      // Providers set assistant text on `content`; the `text` read is a
+      // defensive fallback for any future/adapter frame that uses `text`.
       const content =
         typeof data.content === 'string' && data.content
           ? data.content
@@ -146,7 +148,10 @@ export class ResponseCollector {
     const outputTokens = toFiniteNumber(latest.outputTokens);
     const cacheReadTokens = toFiniteNumber(latest.cacheReadTokens);
     const cacheCreationTokens = toFiniteNumber(latest.cacheCreationTokens);
-    const totalTokens = toFiniteNumber(latest.used) || inputTokens + outputTokens;
+    // Every real provider frame sets `used`; only fall back to input+output when
+    // it is truly absent (a genuine used: 0 must not be treated as missing).
+    const totalTokens =
+      latest.used != null ? toFiniteNumber(latest.used) : inputTokens + outputTokens;
 
     return {
       inputTokens,

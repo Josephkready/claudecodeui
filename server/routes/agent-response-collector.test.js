@@ -55,13 +55,18 @@ test('getAssistantMessages drops empty-content frames and falls back to `text`',
 });
 
 test('getAssistantMessages handles JSON-string entries', () => {
+  // Codex feeds this collector JSON strings: openai-codex.js's sendMessage()
+  // stringifies unless the writer flags itself as SSE/websocket, which
+  // ResponseCollector does not — so the string path is load-bearing.
   const collector = new ResponseCollector();
-  collector.send(JSON.stringify(assistantText('Stringified reply')));
+  collector.send(JSON.stringify(assistantText('Stringified reply', 'codex')));
   collector.send('not json at all');
 
   const messages = collector.getAssistantMessages();
 
   assert.deepEqual(messages.map((m) => m.content), ['Stringified reply']);
+  // sessionId is still recovered from a stringified frame.
+  assert.equal(collector.getSessionId(), 'sess-1');
 });
 
 test('getTotalTokens uses the LAST token_budget frame (cumulative, not summed)', () => {
@@ -95,20 +100,34 @@ test('getTotalTokens uses the LAST token_budget frame (cumulative, not summed)',
   });
 });
 
-test('getTotalTokens derives totalTokens from input+output when `used` is absent', () => {
+test('getTotalTokens handles a codex-style budget (has `used`, no cache fields)', () => {
   const collector = new ResponseCollector();
-  // Codex-style budget: no cache fields, no `used`.
-  collector.send(tokenBudget({ inputTokens: 150, outputTokens: 50 }, 'codex'));
+  // extractCodexTokenBudget always sets `used` and never emits cache fields.
+  collector.send(tokenBudget({ used: 200, inputTokens: 150, outputTokens: 50 }, 'codex'));
 
-  const tokens = collector.getTotalTokens();
-
-  assert.deepEqual(tokens, {
+  assert.deepEqual(collector.getTotalTokens(), {
     inputTokens: 150,
     outputTokens: 50,
     cacheReadTokens: 0,
     cacheCreationTokens: 0,
     totalTokens: 200,
   });
+});
+
+test('getTotalTokens derives totalTokens from input+output when `used` is absent', () => {
+  const collector = new ResponseCollector();
+  // Defensive: no real provider frame omits `used`, but a malformed/future one
+  // should still yield a sensible total rather than 0.
+  collector.send(tokenBudget({ inputTokens: 150, outputTokens: 50 }));
+
+  assert.equal(collector.getTotalTokens().totalTokens, 200);
+});
+
+test('getTotalTokens reports a genuine `used: 0` as 0 (not input+output)', () => {
+  const collector = new ResponseCollector();
+  collector.send(tokenBudget({ used: 0, inputTokens: 0, outputTokens: 0 }));
+
+  assert.equal(collector.getTotalTokens().totalTokens, 0);
 });
 
 test('getTotalTokens returns all-zero when no token_budget frame was seen', () => {
