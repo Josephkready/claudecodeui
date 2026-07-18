@@ -126,23 +126,58 @@ test("headerless +/- content is bucketed under 'unknown' (legacy fallback)", () 
   assert.equal(files[0].newString, 'new line');
 });
 
-test('unified-diff ---/+++ headers and @@/context lines are ignored', () => {
+test('@@ hunk headers and context lines are ignored; extra dash/plus content is kept', () => {
   const patch = [
     '*** Update File: src/a.ts',
-    '--- a/src/a.ts',
-    '+++ b/src/a.ts',
-    '@@ -1,3 +1,3 @@',
+    '@@ -1,4 +1,4 @@',
     ' unchanged context',
-    '-removed',
-    '+added',
+    '--count;', // removed line whose real content is "-count;"
+    '+++value;', // added line whose real content is "++value;"
     '*** End Patch',
   ].join('\n');
 
   const files = parseApplyPatch(patch);
 
   assert.equal(files.length, 1);
-  assert.equal(files[0].oldString, 'removed');
-  assert.equal(files[0].newString, 'added');
+  // apply_patch has no unified-diff ---/+++ headers, so a line starting with
+  // extra markers is content: exactly one leading char is stripped, not the run.
+  assert.equal(files[0].oldString, '-count;');
+  assert.equal(files[0].newString, '++value;');
+});
+
+test('CRLF line endings are handled (header still matches, no stray \\r)', () => {
+  const patch = [
+    '*** Update File: src/a.ts',
+    '-const x = 1;',
+    '+const x = 2;',
+    '*** End Patch',
+  ].join('\r\n');
+
+  const files = parseApplyPatch(patch);
+
+  assert.equal(files.length, 1);
+  assert.equal(files[0].filePath, 'src/a.ts'); // not bucketed as 'unknown'
+  assert.equal(files[0].oldString, 'const x = 1;'); // no trailing \r
+  assert.equal(files[0].newString, 'const x = 2;');
+});
+
+test("'*** Move to:' records the rename destination", () => {
+  const patch = [
+    '*** Begin Patch',
+    '*** Update File: old/name.ts',
+    '*** Move to: new/name.ts',
+    '-const a = 1;',
+    '+const a = 2;',
+    '*** End Patch',
+  ].join('\n');
+
+  const files = parseApplyPatch(patch);
+
+  assert.equal(files.length, 1);
+  assert.equal(files[0].filePath, 'old/name.ts');
+  assert.equal(files[0].movedTo, 'new/name.ts');
+  assert.equal(files[0].oldString, 'const a = 1;');
+  assert.equal(files[0].newString, 'const a = 2;');
 });
 
 test('empty / no-op input yields no files', () => {

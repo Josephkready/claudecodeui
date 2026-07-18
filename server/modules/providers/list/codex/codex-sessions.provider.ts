@@ -245,7 +245,9 @@ async function getCodexSessionMessages(
                   timestamp: entry.timestamp,
                   toolName: 'Edit',
                   toolInput: JSON.stringify({
-                    file_path: file.filePath,
+                    // Show `old → new` when the patch renamed the file so the
+                    // move isn't hidden; otherwise just the path.
+                    file_path: file.movedTo ? `${file.filePath} → ${file.movedTo}` : file.filePath,
                     old_string: file.oldString,
                     new_string: file.newString,
                   }),
