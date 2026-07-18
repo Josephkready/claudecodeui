@@ -114,7 +114,6 @@
     "restoreSessionError": "Error restoring session. Please try again."
   },
   "version": {
-    "updateAvailable": "Update available",
     "restartRequired": "Update installed — restart the server to apply"
   },
   "search": {
