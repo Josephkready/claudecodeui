@@ -7,6 +7,8 @@ import type { IProviderSessions } from '@/shared/interfaces.js';
 import type { AnyRecord, FetchHistoryOptions, FetchHistoryResult, NormalizedMessage } from '@/shared/types.js';
 import { createNormalizedMessage, generateMessageId, readObjectRecord, sliceTailPage } from '@/shared/utils.js';
 
+import { parseApplyPatch } from './apply-patch.js';
+
 const PROVIDER = 'codex';
 
 type CodexHistoryResult =
@@ -220,31 +222,37 @@ async function getCodexSessionMessages(
           const input = entry.payload.input || '';
 
           if (toolName === 'apply_patch') {
-            const fileMatch = String(input).match(/\*\*\* Update File: (.+)/);
-            const filePath = fileMatch ? fileMatch[1].trim() : 'unknown';
-            const lines = String(input).split('\n');
-            const oldLines: string[] = [];
-            const newLines: string[] = [];
+            // A single apply_patch call can touch multiple files; emit one Edit
+            // per file so a multi-file patch no longer collapses into one
+            // incorrect Edit against the first file (#99). Each Edit reuses the
+            // call_id, so the single tool result attaches to all of them.
+            const patchFiles = parseApplyPatch(String(input));
 
-            for (const lineContent of lines) {
-              if (lineContent.startsWith('-') && !lineContent.startsWith('---')) {
-                oldLines.push(lineContent.slice(1));
-              } else if (lineContent.startsWith('+') && !lineContent.startsWith('+++')) {
-                newLines.push(lineContent.slice(1));
+            if (patchFiles.length === 0) {
+              // Nothing parseable (e.g. an empty patch) — pass the raw call
+              // through so it still appears in the transcript.
+              messages.push({
+                type: 'tool_use',
+                timestamp: entry.timestamp,
+                toolName,
+                toolInput: input,
+                toolCallId: entry.payload.call_id,
+              });
+            } else {
+              for (const file of patchFiles) {
+                messages.push({
+                  type: 'tool_use',
+                  timestamp: entry.timestamp,
+                  toolName: 'Edit',
+                  toolInput: JSON.stringify({
+                    file_path: file.filePath,
+                    old_string: file.oldString,
+                    new_string: file.newString,
+                  }),
+                  toolCallId: entry.payload.call_id,
+                });
               }
             }
-
-            messages.push({
-              type: 'tool_use',
-              timestamp: entry.timestamp,
-              toolName: 'Edit',
-              toolInput: JSON.stringify({
-                file_path: filePath,
-                old_string: oldLines.join('\n'),
-                new_string: newLines.join('\n'),
-              }),
-              toolCallId: entry.payload.call_id,
-            });
           } else {
             messages.push({
               type: 'tool_use',
