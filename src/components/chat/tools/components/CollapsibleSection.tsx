@@ -11,6 +11,10 @@ interface CollapsibleSectionProps {
   onTitleClick?: () => void;
   children: React.ReactNode;
   className?: string;
+  /** Cap the expanded body at max-h-80 and scroll past it. Default true;
+   *  set false for interactive content (e.g. question/answer) the user
+   *  should see in full without an inner scroll. */
+  capHeight?: boolean;
 }
 
 /**
@@ -25,6 +29,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
   onTitleClick,
   children,
   className = '',
+  capHeight = true,
 }) => {
   return (
     <Collapsible defaultOpen={open} className={cn('group/section', className)}>
@@ -81,7 +86,7 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
       <CollapsibleContent>
         {/* Cap expanded tool output so a single block can't dominate the chat;
             mirrors BashCommandDisplay's max-h-80 and scrolls past that. */}
-        <div className="mt-1.5 max-h-80 overflow-y-auto pl-[18px]">
+        <div className={cn('mt-1.5 pl-[18px]', capHeight && 'max-h-80 overflow-y-auto')}>
           {children}
         </div>
       </CollapsibleContent>
