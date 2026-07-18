@@ -42,8 +42,10 @@ export function formatFileSize(bytes?: number): string {
   }
 
   const base = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const index = Math.floor(Math.log(bytes) / Math.log(base));
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  // Clamp so sizes beyond the last unit (>= 1 EB) still render a real unit
+  // instead of `undefined`.
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(base)), sizes.length - 1);
 
   return `${(bytes / Math.pow(base, index)).toFixed(1).replace(/\.0$/, '')} ${sizes[index]}`;
 }
