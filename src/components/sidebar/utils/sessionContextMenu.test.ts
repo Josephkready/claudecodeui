@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { Archive, ExternalLink, Pencil, Trash2 } from 'lucide-react';
+
 import { buildSessionContextMenuActions } from './sessionContextMenu';
 
 const labels = {
@@ -100,5 +102,20 @@ test('uses the provided labels verbatim (i18n-resolved strings)', () => {
   assert.deepEqual(
     actions.map((action) => action.label),
     ['Open in new tab', 'Rename', 'Archive', 'Delete permanently'],
+  );
+});
+
+test('wires the intended lucide icon to each action', () => {
+  // A swapped icon (e.g. Archive <-> Trash2) would pass the key/label checks but
+  // mislead users, so pin the icon identities explicitly.
+  const actions = buildSessionContextMenuActions({
+    isActive: false,
+    labels,
+    handlers: handlersRecording([]),
+  });
+
+  assert.deepEqual(
+    actions.map((action) => action.icon),
+    [ExternalLink, Pencil, Archive, Trash2],
   );
 });

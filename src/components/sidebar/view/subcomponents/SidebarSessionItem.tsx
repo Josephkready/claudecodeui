@@ -148,6 +148,10 @@ export default function SidebarSessionItem({
           onDelete: requestDeleteSession,
         },
       }),
+    // The action closures capture the archive/delete/rename handlers, which all
+    // resolve to stable setters or useCallback-wrapped handlers, so an omitted
+    // handler dep can't go stale in a way that matters. Rebuild only when the
+    // gating flag, session identity, name, or translations change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [isProcessing, session.id, sessionView.sessionName, t],
   );

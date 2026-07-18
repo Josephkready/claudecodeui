@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
+import { Loader2 } from 'lucide-react';
 
 import { cn } from '../../../lib/utils';
 
@@ -136,7 +137,13 @@ export default function CursorContextMenu({
         const previousIndex = currentIndex > 0 ? currentIndex - 1 : menuItems.length - 1;
         menuItems[previousIndex]?.focus();
       } else if (event.key === 'Enter' || event.key === ' ') {
-        if (activeElement?.hasAttribute('role')) {
+        // Only activate a focused menu item inside this menu — never some other
+        // role-bearing element that happened to hold focus when the menu opened.
+        if (
+          activeElement &&
+          menuRef.current?.contains(activeElement) &&
+          activeElement.getAttribute('role') === 'menuitem'
+        ) {
           event.preventDefault();
           activeElement.click();
         }
@@ -189,8 +196,17 @@ export default function CursorContextMenu({
                         : 'hover:bg-accent',
                   )}
                 >
-                  {Icon && <Icon className="h-4 w-4 flex-shrink-0" />}
-                  <span className="flex-1">{item.label}</span>
+                  {item.loading ? (
+                    <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+                  ) : (
+                    Icon && <Icon className="h-4 w-4 flex-shrink-0" />
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block">{item.label}</span>
+                    {item.description && (
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{item.description}</span>
+                    )}
+                  </span>
                 </button>
               </Fragment>
             );
