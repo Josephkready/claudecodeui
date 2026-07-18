@@ -5,6 +5,7 @@ import { Button } from '../../../../shared/view/ui';
 import type { SessionActivityMap } from '../../../../hooks/useSessionProtection';
 import type { Project, ProjectSession, LLMProvider } from '../../../../types/app';
 import type { SessionWithProvider } from '../../types/types';
+import { isSessionDone } from '../../utils/conversationList';
 
 import SidebarSessionItem from './SidebarSessionItem';
 
@@ -17,7 +18,6 @@ type SidebarProjectSessionsProps = {
   hasMoreSessions: boolean;
   isLoadingMoreSessions: boolean;
   activeSessions: SessionActivityMap;
-  attentionSessionIds: ReadonlySet<string>;
   currentTime: Date;
   editingSession: string | null;
   editingSessionName: string;
@@ -66,7 +66,6 @@ export default function SidebarProjectSessions({
   hasMoreSessions,
   isLoadingMoreSessions,
   activeSessions,
-  attentionSessionIds,
   currentTime,
   editingSession,
   editingSessionName,
@@ -128,7 +127,13 @@ export default function SidebarProjectSessions({
               session={session}
               selectedSession={selectedSession}
               isProcessing={activeSessions.has(session.id)}
-              needsAttention={attentionSessionIds.has(session.id)}
+              // Blocked-on-you or finished-but-unviewed both warrant the dot,
+              // derived from the same server-authoritative state as the
+              // Conversations bands (see conversationList.resolveStatus).
+              needsAttention={
+                Boolean(activeSessions.get(session.id)?.blocked)
+                || isSessionDone(session, selectedSession?.id ?? null)
+              }
               currentTime={currentTime}
               editingSession={editingSession}
               editingSessionName={editingSessionName}

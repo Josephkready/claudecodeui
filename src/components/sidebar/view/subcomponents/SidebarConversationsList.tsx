@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { Activity, AlertCircle, Check, Clock, Edit2, Loader2, MessageSquare, Trash2, X } from 'lucide-react';
+import { Activity, AlertCircle, Check, CheckCircle2, Clock, Edit2, Loader2, MessageSquare, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { cn } from '../../../../lib/utils';
@@ -27,8 +27,6 @@ type SessionRowActions = {
 type SidebarConversationsListProps = SessionRowActions & {
   projects: Project[];
   activeSessions: SessionActivityMap;
-  attentionSessionIds: ReadonlySet<string>;
-  onClearAllAttention: () => void;
   selectedSession: ProjectSession | null;
   currentTime: Date;
   onSelect: (session: SessionWithProvider, project: Project) => void;
@@ -45,9 +43,10 @@ type SectionMeta = {
 // Presentation metadata per status band, keyed so rendering walks STATUS_ORDER
 // (the single ordering source in conversationList.ts) instead of a parallel list.
 const SECTION_META: Record<ConversationStatus, SectionMeta> = {
-  attention: { icon: AlertCircle, iconClassName: 'text-amber-500', labelKey: 'conversations.attentionHeader', labelFallback: 'Needs attention' },
+  blocked: { icon: AlertCircle, iconClassName: 'text-amber-500', labelKey: 'conversations.blockedHeader', labelFallback: 'Blocked' },
+  done: { icon: CheckCircle2, iconClassName: 'text-sky-500', labelKey: 'conversations.doneHeader', labelFallback: 'Done' },
   running: { icon: Activity, iconClassName: 'text-emerald-500', labelKey: 'conversations.runningHeader', labelFallback: 'Running' },
-  idle: { icon: Clock, iconClassName: 'text-muted-foreground', labelKey: 'conversations.idleHeader', labelFallback: 'Recent' },
+  recent: { icon: Clock, iconClassName: 'text-muted-foreground', labelKey: 'conversations.recentHeader', labelFallback: 'Recent' },
 };
 
 function ConversationRow({
@@ -76,8 +75,7 @@ function ConversationRow({
   const projectName = project.displayName || project.projectId;
   const compactAge = formatCompactAge(item.activityTime, currentTime);
   const isEditing = editingSession === session.id;
-  const isRunning = status === 'running';
-  // A blocked-but-running session ranks as `attention` (not `running`), so gate
+  // A blocked-but-running session ranks as `blocked` (not `running`), so gate
   // the destructive action on the live-run flag — never on the ranking band —
   // to avoid exposing archive/delete for an in-flight session (matches the
   // Projects view, which hides it while processing).
@@ -114,20 +112,27 @@ function ConversationRow({
   };
 
   let statusIndicator: ReactNode = null;
-  if (status === 'attention') {
+  if (status === 'blocked') {
     statusIndicator = (
       <span
         role="status"
-        aria-label={t('conversations.attentionStatus', 'Needs attention')}
-        title={t('conversations.attentionStatus', 'Needs attention')}
+        aria-label={t('conversations.blockedStatus', 'Blocked — needs you')}
+        title={t('conversations.blockedStatus', 'Blocked — needs you')}
         className="h-2 w-2 flex-shrink-0 animate-pulse rounded-full bg-amber-500"
       />
     );
-  } else if (isRunning) {
+  } else if (status === 'running') {
     statusIndicator = (
       <Loader2
         aria-label={t('conversations.runningStatus', 'Working')}
         className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-emerald-500"
+      />
+    );
+  } else if (status === 'done') {
+    statusIndicator = (
+      <CheckCircle2
+        aria-label={t('conversations.doneStatus', 'Done — unreviewed')}
+        className="h-3.5 w-3.5 flex-shrink-0 text-sky-500"
       />
     );
   } else if (compactAge) {
@@ -142,11 +147,13 @@ function ConversationRow({
           'flex w-full min-w-0 items-center gap-2 rounded-md border p-2 text-left transition-all duration-150',
           isSelected
             ? 'border-primary/20 bg-primary/5'
-            : status === 'attention'
+            : status === 'blocked'
               ? 'border-amber-500/30 bg-amber-50/10 hover:bg-amber-50/20 dark:bg-amber-900/5 dark:hover:bg-amber-900/10'
-              : isRunning
+              : status === 'running'
                 ? 'border-emerald-500/30 bg-emerald-50/10 hover:bg-emerald-50/20 dark:bg-emerald-900/5 dark:hover:bg-emerald-900/10'
-                : 'border-border/30 bg-card hover:bg-accent/50',
+                : status === 'done'
+                  ? 'border-sky-500/30 bg-sky-50/10 hover:bg-sky-50/20 dark:bg-sky-900/5 dark:hover:bg-sky-900/10'
+                  : 'border-border/30 bg-card hover:bg-accent/50',
         )}
         // Left-click keeps in-app navigation; Ctrl/Cmd/middle-click and the native
         // context menu use the href to open the session in a new tab.
@@ -268,8 +275,6 @@ function ConversationRow({
 export default function SidebarConversationsList({
   projects,
   activeSessions,
-  attentionSessionIds,
-  onClearAllAttention,
   selectedSession,
   currentTime,
   onSelect,
@@ -283,9 +288,10 @@ export default function SidebarConversationsList({
   onArchiveSession,
   t,
 }: SidebarConversationsListProps) {
+  const selectedSessionId = selectedSession?.id ?? null;
   const items = useMemo(
-    () => buildConversationList(projects, activeSessions, attentionSessionIds),
-    [projects, activeSessions, attentionSessionIds],
+    () => buildConversationList(projects, activeSessions, selectedSessionId),
+    [projects, activeSessions, selectedSessionId],
   );
 
   if (items.length === 0) {
@@ -328,16 +334,6 @@ export default function SidebarConversationsList({
               <SectionIcon className={cn('h-3 w-3 flex-shrink-0', meta.iconClassName)} />
               <span className="text-xs font-medium text-foreground">{t(meta.labelKey, meta.labelFallback)}</span>
               <span className="text-[11px] text-muted-foreground">{sectionItems.length}</span>
-              {status === 'attention' && (
-                <button
-                  type="button"
-                  onClick={onClearAllAttention}
-                  className="ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                  title={t('conversations.markAllReadTooltip', 'Dismiss all attention flags. Sessions still blocked on you stay flagged.')}
-                >
-                  {t('conversations.markAllRead', 'Mark all read')}
-                </button>
-              )}
             </div>
             <div className="space-y-1">
               {sectionItems.map((item) => (

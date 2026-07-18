@@ -11,7 +11,6 @@ import type {
   ProjectSession,
 } from '../types/app';
 
-import { isAttentionEventKind } from './attentionEvents';
 import type { SessionActivityMap } from './useSessionProtection';
 
 type UseProjectsStateArgs = {
@@ -360,7 +359,6 @@ export function useProjectsState({
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSession, setSelectedSession] = useState<ProjectSession | null>(null);
-  const [attentionSessionIds, setAttentionSessionIds] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<AppTab>(readPersistedTab);
 
   useEffect(() => {
@@ -414,49 +412,34 @@ export function useProjectsState({
   const activeSessionsRef = useRef(activeSessions);
   activeSessionsRef.current = activeSessions;
 
-  const markSessionAttention = useCallback((targetSessionId?: string | null) => {
+  // Opening a session clears its durable "Done" (finished-but-unviewed) state.
+  // The server also stamps last_viewed_at on the history fetch, but that value
+  // only reaches this client on the next projects refresh — so bump it
+  // optimistically here for immediate feedback. A later re-completion re-marks
+  // Done, since last_completed_at moves ahead of this timestamp again.
+  const markSessionViewed = useCallback((targetSessionId?: string | null) => {
     if (!targetSessionId) {
       return;
     }
 
-    const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
-    if (targetSessionId === viewedSessionId) {
-      return;
-    }
+    const id = String(targetSessionId);
+    const viewedAt = new Date().toISOString();
 
-    setAttentionSessionIds((previous) => {
-      if (previous.has(targetSessionId)) {
-        return previous;
+    const bumpProject = (project: Project): Project => {
+      const sessions = project.sessions;
+      if (!sessions?.some((session) => String(session.id) === id)) {
+        return project;
       }
+      return {
+        ...project,
+        sessions: sessions.map((session) =>
+          String(session.id) === id ? { ...session, last_viewed_at: viewedAt } : session,
+        ),
+      };
+    };
 
-      const next = new Set(previous);
-      next.add(targetSessionId);
-      return next;
-    });
-  }, [sessionId]);
-
-  const clearSessionAttention = useCallback((targetSessionId?: string | null) => {
-    if (!targetSessionId) {
-      return;
-    }
-
-    setAttentionSessionIds((previous) => {
-      if (!previous.has(targetSessionId)) {
-        return previous;
-      }
-
-      const next = new Set(previous);
-      next.delete(targetSessionId);
-      return next;
-    });
-  }, []);
-
-  // Bulk "mark all read": clears every event-driven attention flag at once.
-  // Sessions the server reports as blocked stay flagged — resolveStatus derives
-  // their attention from the live blocked flag, not this set — so genuine
-  // "needs me" signals survive while the "changed" noise is dismissed.
-  const clearAllSessionAttention = useCallback(() => {
-    setAttentionSessionIds((previous) => (previous.size === 0 ? previous : new Set()));
+    setProjects((previous) => previous.map(bumpProject));
+    setSelectedProject((previous) => (previous ? bumpProject(previous) : previous));
   }, []);
 
   const fetchProjects = useCallback(async ({ showLoadingState = true }: FetchProjectsOptions = {}) => {
@@ -652,24 +635,11 @@ export function useProjectsState({
         return;
       }
 
-      const eventSessionId = typeof event.sessionId === 'string' && event.sessionId
-        ? event.sessionId
-        : null;
-      const viewedSessionId = selectedSessionRef.current?.id ?? sessionId ?? null;
-
-      // Only genuine "the agent needs you now" signals promote a background
-      // session to the attention band — a finished run or a blocked prompt. In
-      // particular, streaming kinds (stream_delta/text/thinking/tool_use/…) are
-      // NOT attention: they fire while the agent is actively running, and
-      // marking them made a still-running session look blocked (#44).
-      if (
-        eventSessionId
-        && eventSessionId !== viewedSessionId
-        && isAttentionEventKind(event.kind)
-      ) {
-        markSessionAttention(eventSessionId);
-      }
-
+      // Attention is no longer tracked per-tab from websocket events. The sidebar
+      // derives Blocked from the live server `blocked` flag and Done from the
+      // persisted last_completed_at/last_viewed_at (conversationList.resolveStatus),
+      // so this handler only reloads the viewed session's transcript when it
+      // changes on disk underneath us.
       if (event.kind !== 'session_upserted') {
         return;
       }
@@ -679,14 +649,10 @@ export function useProjectsState({
         return;
       }
 
-      // A transcript write is a passive "changed on disk" signal, not a "needs
-      // you" one, so it never flags attention. Flagging every write was the #38
-      // noise: idle terminal/CLI sessions constantly flush their transcripts,
-      // inflating the attention count with sessions that don't need the user.
-      // Real attention comes from genuine websocket kinds (isAttentionEventKind
-      // above — complete/permission_request/…) and the server-authoritative
-      // blocked flag surfaced via resolveStatus. Here we only reload the chat
-      // view when the *viewed* session's transcript changed underneath us.
+      // A transcript write is a passive "changed on disk" signal. It never
+      // affects status (Blocked/Done are server-derived, see resolveStatus); we
+      // only reload the chat view when the *viewed* session's transcript changed
+      // underneath us.
       const currentSelectedSession = selectedSessionRef.current;
       if (
         currentSelectedSession
@@ -779,7 +745,7 @@ export function useProjectsState({
     };
 
     return subscribe(handleEvent);
-  }, [markSessionAttention, navigate, sessionId, subscribe]);
+  }, [navigate, sessionId, subscribe]);
 
   useEffect(() => {
     return () => {
@@ -791,8 +757,8 @@ export function useProjectsState({
   }, []);
 
   useEffect(() => {
-    clearSessionAttention(selectedSession?.id ?? sessionId ?? null);
-  }, [clearSessionAttention, selectedSession?.id, sessionId]);
+    markSessionViewed(selectedSession?.id ?? sessionId ?? null);
+  }, [markSessionViewed, selectedSession?.id, sessionId]);
 
   useEffect(() => {
     if (!sessionId || projects.length === 0) {
@@ -859,7 +825,7 @@ export function useProjectsState({
 
   const handleSessionSelect = useCallback(
     (session: ProjectSession) => {
-      clearSessionAttention(session.id);
+      markSessionViewed(session.id);
       setSelectedSession(session);
 
       if (activeTab === 'tasks' || activeTab === 'browser') {
@@ -881,7 +847,7 @@ export function useProjectsState({
 
       navigate(`/session/${session.id}`);
     },
-    [activeTab, clearSessionAttention, isMobile, navigate, selectedProject?.projectId],
+    [activeTab, markSessionViewed, isMobile, navigate, selectedProject?.projectId],
   );
 
   const handleNewSession = useCallback(
@@ -901,8 +867,6 @@ export function useProjectsState({
 
   const handleSessionDelete = useCallback(
     (sessionIdToDelete: string) => {
-      clearSessionAttention(sessionIdToDelete);
-
       if (selectedSession?.id === sessionIdToDelete) {
         setSelectedSession(null);
         navigate('/');
@@ -912,7 +876,7 @@ export function useProjectsState({
         prevProjects.map((project) => removeSessionFromProject(project, sessionIdToDelete)),
       );
     },
-    [clearSessionAttention, navigate, selectedSession?.id],
+    [navigate, selectedSession?.id],
   );
 
   const handleSidebarRefresh = useCallback(async () => {
@@ -1033,8 +997,6 @@ export function useProjectsState({
       selectedProject,
       selectedSession,
       activeSessions,
-      attentionSessionIds,
-      onClearAllAttention: clearAllSessionAttention,
       onProjectSelect: handleProjectSelect,
       onSessionSelect: handleSessionSelect,
       onNewSession: handleNewSession,
@@ -1051,8 +1013,6 @@ export function useProjectsState({
       isMobile,
     }),
     [
-      attentionSessionIds,
-      clearAllSessionAttention,
       handleNewSession,
       handleProjectDelete,
       handleProjectSelect,

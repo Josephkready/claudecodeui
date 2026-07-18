@@ -29,8 +29,6 @@ export type SidebarProjectListProps = {
   onLoadMoreSessions: (projectId: string) => void;
   loadingMoreProjects: Set<string>;
   activeSessions: SessionActivityMap;
-  attentionSessionIds: ReadonlySet<string>;
-  onClearAllAttention: () => void;
   isProjectStarred: (projectName: string) => boolean;
   onEditingNameChange: (value: string) => void;
   onToggleProject: (projectName: string) => void;
@@ -77,7 +75,6 @@ export default function SidebarProjectList({
   onLoadMoreSessions,
   loadingMoreProjects,
   activeSessions,
-  attentionSessionIds,
   isProjectStarred,
   onEditingNameChange,
   onToggleProject,
@@ -156,7 +153,6 @@ export default function SidebarProjectList({
               onArchiveSession={onArchiveSession}
               onLoadMoreSessions={onLoadMoreSessions}
               activeSessions={activeSessions}
-              attentionSessionIds={attentionSessionIds}
               onNewSession={onNewSession}
               onEditingSessionNameChange={onEditingSessionNameChange}
               onStartEditingSession={onStartEditingSession}

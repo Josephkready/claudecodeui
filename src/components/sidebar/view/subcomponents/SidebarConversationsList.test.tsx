@@ -34,8 +34,6 @@ function render(activeSessions: SessionActivityMap, sessionId: string): string {
     React.createElement(SidebarConversationsList, {
       projects: [projectWith(sessionId)],
       activeSessions,
-      attentionSessionIds: new Set<string>(),
-      onClearAllAttention: noop,
       selectedSession: null,
       currentTime: new Date('2026-07-17T00:00:00Z'),
       onSelect: noop,
@@ -53,7 +51,7 @@ function render(activeSessions: SessionActivityMap, sessionId: string): string {
 }
 
 test('hides the archive/delete button for a blocked-but-running session', () => {
-  // Blocked run: present in activeSessions with blocked=true → ranks `attention`,
+  // Blocked run: present in activeSessions with blocked=true → ranks `blocked`,
   // isActive=true → destructive action must be absent from the DOM.
   const html = render(new Map([['s', activity(true)]]), 's');
   assert.ok(html.includes('tooltips.editSessionName'), 'rename button should still render');

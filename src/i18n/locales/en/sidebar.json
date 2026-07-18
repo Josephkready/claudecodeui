@@ -130,16 +130,16 @@
     "projectsScanned_other": "{{count}} projects scanned"
   },
   "conversations": {
-    "attentionHeader": "Needs attention",
+    "blockedHeader": "Blocked",
+    "doneHeader": "Done",
     "runningHeader": "Running",
-    "idleHeader": "Recent",
-    "attentionStatus": "Needs attention",
+    "recentHeader": "Recent",
+    "blockedStatus": "Blocked — needs you",
+    "doneStatus": "Done — unreviewed",
     "runningStatus": "Working",
     "runningBadge": "Running sessions",
     "emptyTitle": "No conversations yet",
-    "emptyDescription": "Start a session from a project and it will appear here.",
-    "markAllRead": "Mark all read",
-    "markAllReadTooltip": "Dismiss all attention flags. Sessions still blocked on you stay flagged."
+    "emptyDescription": "Start a session from a project and it will appear here."
   },
   "deleteConfirmation": {
     "deleteProject": "Remove Project",
