@@ -88,6 +88,7 @@ function Sidebar({
     restoreArchivedProject,
     restoreArchivedSession,
     refreshProjects,
+    bulkArchiveSessionsByAge,
     updateSessionSummary,
     collapseSidebar: handleCollapseSidebar,
     expandSidebar: handleExpandSidebar,
@@ -272,6 +273,9 @@ function Sidebar({
             isRefreshing={isRefreshing}
             onCreateProject={() => setShowNewProject(true)}
             onCollapseSidebar={handleCollapseSidebar}
+            onBulkArchiveOlderThanDays={(days) => {
+              void bulkArchiveSessionsByAge(days);
+            }}
             restartRequired={restartRequired}
             currentVersion={currentVersion}
             onShowSettings={onShowSettings}

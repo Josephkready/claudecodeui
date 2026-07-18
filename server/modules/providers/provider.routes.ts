@@ -323,6 +323,29 @@ const parseSessionRenameSummary = (payload: unknown): string => {
   return summary;
 };
 
+const parseArchiveByAgeDays = (payload: unknown): number => {
+  if (!payload || typeof payload !== 'object') {
+    throw new AppError('Request body must be an object.', {
+      code: 'INVALID_REQUEST_BODY',
+      statusCode: 400,
+    });
+  }
+
+  const body = payload as Record<string, unknown>;
+  // Require an actual number — no string/array coercion — so surprising inputs
+  // like `{ days: [7] }` (which `Number()` would quietly coerce to 7) are
+  // rejected rather than silently accepted.
+  const days = body.days;
+  if (typeof days !== 'number' || !Number.isFinite(days) || days <= 0) {
+    throw new AppError('days must be a positive number.', {
+      code: 'INVALID_ARCHIVE_AGE',
+      statusCode: 400,
+    });
+  }
+
+  return days;
+};
+
 const parseSessionSearchQuery = (value: unknown): string => {
   const query = readOptionalQueryString(value) ?? '';
   if (query.length < 2) {
@@ -553,6 +576,17 @@ router.get(
   asyncHandler(async (_req: Request, res: Response) => {
     const sessions = sessionsService.listArchivedSessions();
     res.json(createApiSuccessResponse({ sessions }));
+  }),
+);
+
+// Registered before the `/sessions/:sessionId` routes so the literal path is
+// never shadowed by the id param.
+router.post(
+  '/sessions/archive-by-age',
+  asyncHandler(async (req: Request, res: Response) => {
+    const days = parseArchiveByAgeDays(req.body);
+    const result = sessionsService.bulkArchiveSessionsOlderThan(days);
+    res.json(createApiSuccessResponse(result));
   }),
 );
 
