@@ -6,9 +6,6 @@ import path from 'path';
 import os from 'os';
 import http from 'http';
 
-// cross-spawn is a drop-in for child_process.spawn that resolves .cmd
-// shims/PATHEXT on Windows and delegates to the native spawn elsewhere.
-import spawn from 'cross-spawn';
 import express from 'express';
 import cors from 'cors';
 import mime from 'mime-types';
@@ -71,8 +68,8 @@ import { startEnabledPluginServers, stopAllPlugins, getPluginPort } from './util
 import { initializeDatabase, projectsDb, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './services/vapid-keys.js';
 import { validateApiKey, authenticateToken, authenticateWebSocket } from './middleware/auth.js';
-import { IS_PLATFORM, AUTH_DISABLED, SELF_UPDATE_DISABLED } from './constants/config.js';
-import { resolveInstallMode, resolveUpdatePlan } from './shared/self-update.js';
+import { IS_PLATFORM, AUTH_DISABLED } from './constants/config.js';
+import { resolveInstallMode } from './shared/self-update.js';
 import { c } from './utils/colors.js';
 
 const __dirname = getModuleDir(import.meta.url);
@@ -276,83 +273,6 @@ app.use(express.static(path.join(APP_ROOT, 'dist'), {
 // API Routes (protected)
 // /api/config endpoint removed - no longer needed
 // Frontend now uses window.location for WebSocket URLs
-
-// System update endpoint
-app.post('/api/system/update', authenticateToken, async (req, res) => {
-    try {
-        // Deployments whose code is owned by something else (config management, an image
-        // rebuild, a package manager) opt out: updating here would race the real owner.
-        if (SELF_UPDATE_DISABLED) {
-            console.log('Rejected system update: SELF_UPDATE_DISABLED is set');
-            return res.status(403).json({
-                success: false,
-                error: 'In-app update is disabled on this deployment.',
-                message: 'This install is managed externally (SELF_UPDATE_DISABLED=true). Update it through whatever deploys it.'
-            });
-        }
-
-        const { command: updateCommand, cwd: updateCwd } = resolveUpdatePlan({
-            isPlatform: IS_PLATFORM,
-            installMode,
-            appRoot: APP_ROOT,
-            homeDir: os.homedir()
-        });
-
-        console.log('Starting system update:', updateCommand, 'in', updateCwd);
-
-        const child = spawn('sh', ['-c', updateCommand], {
-            cwd: updateCwd,
-            env: process.env
-        });
-
-        let output = '';
-        let errorOutput = '';
-
-        child.stdout.on('data', (data) => {
-            const text = data.toString();
-            output += text;
-            console.log('Update output:', text);
-        });
-
-        child.stderr.on('data', (data) => {
-            const text = data.toString();
-            errorOutput += text;
-            console.error('Update error:', text);
-        });
-
-        child.on('close', (code) => {
-            if (code === 0) {
-                res.json({
-                    success: true,
-                    output: output || 'Update completed successfully',
-                    message: 'Update completed. Please restart the server to apply changes.'
-                });
-            } else {
-                res.status(500).json({
-                    success: false,
-                    error: 'Update command failed',
-                    output: output,
-                    errorOutput: errorOutput
-                });
-            }
-        });
-
-        child.on('error', (error) => {
-            console.error('Update process error:', error);
-            res.status(500).json({
-                success: false,
-                error: error.message
-            });
-        });
-
-    } catch (error) {
-        console.error('System update error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
 const expandWorkspacePath = (inputPath) => {
     if (!inputPath) return inputPath;
@@ -1388,9 +1308,6 @@ async function startServer() {
             console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
             if (AUTH_DISABLED) {
                 console.warn('[WARN] VITE_AUTH_DISABLED is set — login is OFF; every request runs as the single default user.');
-            }
-            if (SELF_UPDATE_DISABLED) {
-                console.warn('[WARN] SELF_UPDATE_DISABLED is set — in-app update is OFF; this deployment is managed externally.');
             }
             console.log('');
 
