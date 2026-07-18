@@ -11,6 +11,44 @@ import { parseApplyPatch } from './apply-patch.js';
 
 const PROVIDER = 'codex';
 
+/**
+ * Pairs each Codex `tool_use` with its `tool_result` in place.
+ *
+ * A single Codex `apply_patch` touching multiple files is expanded into one
+ * `Edit` per file (#99), and every Edit reuses the patch's `call_id`. There is
+ * only ever one shared `custom_tool_call_output` for that `call_id`, so
+ * attaching it to *every* Edit rendered the same "Success. Updated …" block once
+ * per file (#119). To keep the transcript readable while still leaving no Edit
+ * silently result-less on the common single-file path, the result is attached
+ * to only the **last** `tool_use` sharing a `call_id` — it then reads once,
+ * after the final file's diff, and the earlier Edits stay output-less.
+ *
+ * Exported for tests.
+ */
+export function attachCodexToolResults(normalized: NormalizedMessage[]): void {
+  const toolResultMap = new Map<string, NormalizedMessage>();
+  for (const msg of normalized) {
+    if (msg.kind === 'tool_result' && msg.toolId) {
+      toolResultMap.set(msg.toolId, msg);
+    }
+  }
+
+  // Walk backwards so the first tool_use we see for a given call_id is the last
+  // one in transcript order; claim the result there and skip earlier duplicates.
+  const claimed = new Set<string>();
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    const msg = normalized[i];
+    if (msg.kind !== 'tool_use' || !msg.toolId || claimed.has(msg.toolId)) {
+      continue;
+    }
+    const toolResult = toolResultMap.get(msg.toolId);
+    if (toolResult) {
+      msg.toolResult = { content: toolResult.content, isError: toolResult.isError };
+      claimed.add(msg.toolId);
+    }
+  }
+}
+
 type CodexHistoryResult =
   | AnyRecord[]
   | {
@@ -587,20 +625,7 @@ export class CodexSessionsProvider implements IProviderSessions {
       normalized.push(...this.normalizeHistoryEntry(raw, sessionId));
     }
 
-    const toolResultMap = new Map<string, NormalizedMessage>();
-    for (const msg of normalized) {
-      if (msg.kind === 'tool_result' && msg.toolId) {
-        toolResultMap.set(msg.toolId, msg);
-      }
-    }
-    for (const msg of normalized) {
-      if (msg.kind === 'tool_use' && msg.toolId && toolResultMap.has(msg.toolId)) {
-        const toolResult = toolResultMap.get(msg.toolId);
-        if (toolResult) {
-          msg.toolResult = { content: toolResult.content, isError: toolResult.isError };
-        }
-      }
-    }
+    attachCodexToolResults(normalized);
 
     let total = 0;
     for (const msg of normalized) {
