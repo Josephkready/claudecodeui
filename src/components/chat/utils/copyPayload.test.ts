@@ -37,3 +37,16 @@ test('markdown format returns content verbatim', () => {
 test('convertMarkdownToPlainText deletes angle-bracket tokens (why error must bypass it)', () => {
   assert.equal(convertMarkdownToPlainText('at <anonymous>'), 'at');
 });
+
+test('error content is returned untrimmed (verbatim), unlike the stripper', () => {
+  // The stripper trims; the error path must NOT — leading/trailing whitespace in
+  // stderr (indentation, trailing newline) is part of the verbatim output.
+  const padded = '   \n  indented\n  ';
+  assert.equal(resolveCopyPayload(padded, 'text', 'error'), padded);
+});
+
+test('empty and whitespace-only input', () => {
+  assert.equal(resolveCopyPayload('', 'text', 'error'), '');
+  // Non-error whitespace collapses to '' via the stripper's trailing .trim().
+  assert.equal(resolveCopyPayload('   \n  ', 'text', 'user'), '');
+});

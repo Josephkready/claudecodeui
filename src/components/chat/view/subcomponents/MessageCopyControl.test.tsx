@@ -46,3 +46,14 @@ test('assistant variant DOES offer the format dropdown (guards the error/assista
   );
   assert.ok(html.includes('Select copy format'), 'assistant messages keep the markdown/text dropdown');
 });
+
+test('user variant is text-only like error (no format dropdown)', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageCopyControl, {
+      content: 'plain user text',
+      messageType: 'user',
+    }),
+  );
+  assert.match(html, /<button\b/, 'user copy control still renders a button');
+  assert.ok(!html.includes('Select copy format'), 'only assistant messages get the format dropdown');
+});
