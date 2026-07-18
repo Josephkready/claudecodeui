@@ -216,6 +216,17 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                         </svg>
                         <span className="text-xs font-medium text-red-700 dark:text-red-300">{t('messageTypes.error')}</span>
+                        {/* Copy button pinned in the header row so it stays visible
+                            while the (max-h-80) error body scrolls (#151). Copies the
+                            raw stderr/stack-trace verbatim as plain text. */}
+                        {String(message.toolResult.content || '').trim().length > 0 && (
+                          <div className="ml-auto flex-shrink-0">
+                            <MessageCopyControl
+                              content={String(message.toolResult.content || '')}
+                              messageType="error"
+                            />
+                          </div>
+                        )}
                       </div>
                       {/* Cap the error body so a long stderr/stack-trace dump
                           can't dominate the chat (#58); the "Error" header above

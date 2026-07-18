@@ -43,7 +43,7 @@ const MessageCopyControl = ({
   messageType,
 }: {
   content: string;
-  messageType: 'user' | 'assistant';
+  messageType: 'user' | 'assistant' | 'error';
 }) => {
   const { t } = useTranslation('chat');
   const canSelectCopyFormat = messageType === 'assistant';
@@ -162,7 +162,9 @@ const MessageCopyControl = ({
 
   const toneClass = messageType === 'user'
     ? 'text-blue-100 hover:text-white'
-    : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300';
+    : messageType === 'error'
+      ? 'text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200'
+      : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300';
   const copyTitle = copied ? t('copyMessage.copied') : t('copyMessage.copy');
   const rootClassName = canSelectCopyFormat
     ? 'relative flex min-w-0 flex-1 items-center gap-0.5 sm:min-w-max sm:flex-none sm:w-auto'
