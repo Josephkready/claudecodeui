@@ -1,4 +1,26 @@
 /**
+ * Coerce a buffered frame to its object form.
+ *
+ * Most provider transports hand this collector normalized objects, but the Codex
+ * runtime routes frames through a `sendMessage()` helper (openai-codex.js) that
+ * JSON-encodes them for any transport it doesn't recognize as an object-accepting
+ * writer (it keys off `isSSEStreamWriter`/`isWebSocketWriter`, which this
+ * collector deliberately does not set). So Codex frames arrive as strings — parse
+ * them back so the read methods see a single shape. Non-JSON strings yield null
+ * and are ignored by callers.
+ */
+function toMessageObject(msg) {
+  if (typeof msg === 'string') {
+    try {
+      return JSON.parse(msg);
+    } catch {
+      return null;
+    }
+  }
+  return msg;
+}
+
+/**
  * Non-streaming response collector for `POST /api/agent`.
  *
  * Stands in for the SSE writer when a caller requests `stream:false`: it buffers
@@ -60,7 +82,8 @@ export class ResponseCollector {
   getAssistantMessages() {
     const assistantMessages = [];
 
-    for (const msg of this.messages) {
+    for (const raw of this.messages) {
+      const msg = toMessageObject(raw);
       if (
         msg &&
         typeof msg === 'object' &&
@@ -88,7 +111,8 @@ export class ResponseCollector {
   getTotalTokens() {
     let latest = null;
 
-    for (const msg of this.messages) {
+    for (const raw of this.messages) {
+      const msg = toMessageObject(raw);
       if (
         msg &&
         typeof msg === 'object' &&

@@ -681,7 +681,9 @@ class SSEStreamWriter {
  *   {
  *     success: true,
  *     sessionId: "session-123",
- *     messages: [...],        // Assistant messages only (filtered)
+ *     // Assistant text only, as normalized envelopes:
+ *     //   { kind: "text", role: "assistant", content: "...", provider, sessionId, id, timestamp }
+ *     messages: [ { kind: "text", role: "assistant", content: "..." } ],
  *     tokens: {
  *       inputTokens: 150,
  *       outputTokens: 50,

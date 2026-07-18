@@ -109,3 +109,43 @@ test('getTotalTokens returns all-zero when no usage frame was emitted', () => {
     totalTokens: 0,
   });
 });
+
+// The Codex runtime routes frames through a `sendMessage()` helper that
+// JSON-encodes them for any transport it doesn't flag as an object-accepting
+// writer (openai-codex.js) — and this collector is not flagged — so Codex frames
+// reach `send()` as strings. Both read methods must still see them, else #96
+// stays broken for Codex specifically.
+test('reads assistant text and tokens from JSON-string frames (Codex transport)', () => {
+  const c = new ResponseCollector();
+  c.send(JSON.stringify(textMsg('user', 'prompt', 'codex')));
+  c.send(JSON.stringify(textMsg('assistant', 'Codex reply', 'codex')));
+  c.send(JSON.stringify(tokenBudgetMsg({ inputTokens: 500, outputTokens: 120 }, 'codex')));
+
+  assert.deepEqual(c.getAssistantMessages().map((m) => m.content), ['Codex reply']);
+  assert.deepEqual(c.getTotalTokens(), {
+    inputTokens: 500,
+    outputTokens: 120,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalTokens: 620,
+  });
+});
+
+test('getTotalTokens tolerates non-object / non-JSON frames without throwing', () => {
+  const c = new ResponseCollector();
+  c.send(null);
+  c.send('not json at all');
+  c.send(undefined);
+  c.send(tokenBudgetMsg({ inputTokens: 7, outputTokens: 3 }));
+  assert.equal(c.getTotalTokens().totalTokens, 10);
+});
+
+test('send() captures sessionId from both object and string frames', () => {
+  const objColl = new ResponseCollector();
+  objColl.send({ kind: 'session_created', sessionId: 'obj-sess', newSessionId: 'obj-sess' });
+  assert.equal(objColl.getSessionId(), 'obj-sess');
+
+  const strColl = new ResponseCollector();
+  strColl.send(JSON.stringify({ kind: 'session_created', sessionId: 'str-sess' }));
+  assert.equal(strColl.getSessionId(), 'str-sess');
+});
