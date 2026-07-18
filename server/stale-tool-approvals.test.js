@@ -169,6 +169,23 @@ test('startStaleToolApprovalReaper fires the reaper on its interval; stop halts 
     t.mock.timers.tick(10); // one interval elapses → the reaper force-denies the stale approval
     // Resolves to null once an interval tick force-denies the stale approval.
     assert.equal(await pending, null);
+
+    // ...and stop halts it: a fresh stale approval registered after stop survives
+    // further ticks, proving the interval was cleared (no reaper runs post-stop).
+    stopStaleToolApprovalReaper();
+    let survivorSettled = false;
+    const survivor = waitForToolApproval('reaper-timer-survivor', {
+      metadata: { _receivedAt: new Date(now - 90 * MINUTE), _sessionId: 's-timer-2', _toolName: 'Bash' },
+    }).then((d) => {
+      survivorSettled = true;
+      return d;
+    });
+    t.mock.timers.tick(10 * 100); // advance far past many intervals — nothing should fire
+    await Promise.resolve(); // drain microtasks so a stray resolution would be observed
+    assert.equal(survivorSettled, false, 'stop() must halt the reaper — no tick fires after stop');
+    // Clean up the still-pending survivor so it can't leak into the module-global map.
+    resolveToolApproval('reaper-timer-survivor', { approved: true });
+    assert.deepEqual(await survivor, { approved: true });
   } finally {
     stopStaleToolApprovalReaper();
   }
