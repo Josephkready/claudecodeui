@@ -45,6 +45,15 @@ test('calculateDiff: emptying a file removes every old line and adds the one emp
   ]);
 });
 
+test('calculateDiff: adding to empty content still reports the removed blank line', () => {
+  // '' splits to [''] (one blank line), so the old blank line is reported removed
+  // alongside the real addition — an asymmetric quirk worth pinning.
+  assert.deepEqual(calculateDiff('', 'a'), [
+    { type: 'removed', content: '', lineNum: 1 },
+    { type: 'added', content: 'a', lineNum: 1 },
+  ]);
+});
+
 test('calculateDiff: line numbers are per-side (old for removals, new for additions)', () => {
   // Replace the first of three lines: removal keeps old numbering, addition new.
   assert.deepEqual(calculateDiff('a\nb\nc', 'x\nb\nc'), [

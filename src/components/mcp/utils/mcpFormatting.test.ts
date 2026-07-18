@@ -5,6 +5,7 @@ import { DEFAULT_MCP_FORM } from '../constants';
 import type { McpFormState } from '../types';
 
 import {
+  createMcpPayloadFromForm,
   formatKeyValueLines,
   getErrorMessage,
   getProjectPath,
@@ -156,6 +157,96 @@ test('parseJsonMcpPayload: rejects a transport the provider does not support', (
   // codex supports stdio/http but not sse.
   assert.throws(
     () => parseJsonMcpPayload('codex', form(JSON.stringify({ type: 'sse', url: 'https://x' }))),
+    /codex does not support sse MCP servers/,
+  );
+});
+
+/* ── createMcpPayloadFromForm ────────────────────────────────────────────── */
+
+test('createMcpPayloadFromForm: stdio form keeps trimmed command/args and drops url/headers', () => {
+  const payload = createMcpPayloadFromForm('claude', {
+    ...DEFAULT_MCP_FORM,
+    importMode: 'form',
+    transport: 'stdio',
+    name: '  srv  ',
+    scope: 'user',
+    command: '  node server.js  ',
+    args: ['--flag'],
+    env: { X: '1' },
+    url: 'ignored',
+    headers: { H: 'ignored' },
+  });
+
+  assert.equal(payload.name, 'srv');
+  assert.equal(payload.transport, 'stdio');
+  assert.equal(payload.command, 'node server.js');
+  assert.deepEqual(payload.args, ['--flag']);
+  assert.deepEqual(payload.env, { X: '1' });
+  // stdio has no url/headers; scope 'user' drops workspacePath; claude has no cwd.
+  assert.equal(payload.url, undefined);
+  assert.equal(payload.headers, undefined);
+  assert.equal(payload.workspacePath, undefined);
+  assert.equal(payload.cwd, undefined);
+});
+
+test('createMcpPayloadFromForm: http form keeps trimmed url/headers and drops command/args', () => {
+  const payload = createMcpPayloadFromForm('claude', {
+    ...DEFAULT_MCP_FORM,
+    importMode: 'form',
+    transport: 'http',
+    scope: 'project',
+    workspacePath: '/w',
+    command: 'ignored',
+    args: ['ignored'],
+    url: '  https://example.com  ',
+    headers: { Authorization: 'Bearer x' },
+  });
+
+  assert.equal(payload.transport, 'http');
+  assert.equal(payload.command, undefined);
+  assert.equal(payload.args, undefined);
+  assert.equal(payload.url, 'https://example.com');
+  assert.deepEqual(payload.headers, { Authorization: 'Bearer x' });
+  // Non-user scope keeps the workspace path.
+  assert.equal(payload.workspacePath, '/w');
+});
+
+test('createMcpPayloadFromForm: codex keeps cwd and provider-specific fields (trimmed)', () => {
+  const payload = createMcpPayloadFromForm('codex', {
+    ...DEFAULT_MCP_FORM,
+    importMode: 'form',
+    transport: 'stdio',
+    command: 'run',
+    cwd: '  /work  ',
+    envVars: ['A'],
+    bearerTokenEnvVar: '  TOK  ',
+    envHttpHeaders: { H: '1' },
+  });
+
+  assert.equal(payload.cwd, '/work');
+  assert.deepEqual(payload.envVars, ['A']);
+  assert.equal(payload.bearerTokenEnvVar, 'TOK');
+  assert.deepEqual(payload.envHttpHeaders, { H: '1' });
+});
+
+test('createMcpPayloadFromForm: json import mode routes through parseJsonMcpPayload', () => {
+  const formData: McpFormState = {
+    ...DEFAULT_MCP_FORM,
+    importMode: 'json',
+    jsonInput: JSON.stringify({ type: 'stdio', command: 'node' }),
+    name: 'from-json',
+  };
+  assert.deepEqual(createMcpPayloadFromForm('claude', formData), parseJsonMcpPayload('claude', formData));
+});
+
+test('createMcpPayloadFromForm: rejects a transport the provider does not support', () => {
+  assert.throws(
+    () =>
+      createMcpPayloadFromForm('codex', {
+        ...DEFAULT_MCP_FORM,
+        importMode: 'form',
+        transport: 'sse',
+      }),
     /codex does not support sse MCP servers/,
   );
 });
