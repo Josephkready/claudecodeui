@@ -63,6 +63,9 @@ test('getSuggestionRootPath: a windows drive root collapses to `C:\\`', () => {
 test('getSuggestionRootPath: a bare name with no separator falls back to `~`', () => {
   assert.equal(getSuggestionRootPath('foo'), '~');
   assert.equal(getSuggestionRootPath('~'), '~');
+  // Root-only path: the sole separator is at index 0 (not > 0), so it also
+  // falls through to the `~` default.
+  assert.equal(getSuggestionRootPath('/'), '~');
 });
 
 /* ── getParentPath ───────────────────────────────────────────────────────── */
@@ -99,6 +102,10 @@ test('joinFolderPath: joins with `/` for unix paths and trims the folder name', 
 test('joinFolderPath: collapses any trailing separators on the base', () => {
   assert.equal(joinFolderPath('/home/user/', 'proj'), '/home/user/proj');
   assert.equal(joinFolderPath('/home/user///', 'proj'), '/home/user/proj');
+});
+
+test('joinFolderPath: a blank base trims to empty and joins with the default `/`', () => {
+  assert.equal(joinFolderPath('   ', 'proj'), '/proj');
 });
 
 test('joinFolderPath: uses `\\` only for a pure-backslash windows base', () => {

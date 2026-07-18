@@ -122,6 +122,11 @@ test('getClaudePermissionSuggestion: non-error results get no suggestion', () =>
   assert.equal(getClaudePermissionSuggestion(message, 'claude'), null);
 });
 
+test('getClaudePermissionSuggestion: a null/undefined message yields no suggestion', () => {
+  assert.equal(getClaudePermissionSuggestion(null, 'claude'), null);
+  assert.equal(getClaudePermissionSuggestion(undefined, 'claude'), null);
+});
+
 test('getClaudePermissionSuggestion: a tool-less error yields no entry, no suggestion', () => {
   const message = toolMessage({ toolName: undefined });
   assert.equal(getClaudePermissionSuggestion(message, 'claude'), null);
