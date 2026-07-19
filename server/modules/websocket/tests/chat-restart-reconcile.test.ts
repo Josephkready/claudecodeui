@@ -256,3 +256,98 @@ test('resume is a safe no-op (acked, no spawn) for a session with no interrupted
     assert.equal(device.protocolErrors().length, 0);
   });
 });
+
+test('resume while a run is already live folds interrupted work into the live dispatcher queue (drained after, in order)', async () => {
+  await withIsolatedDatabase(async () => {
+    sessionsDb.createAppSession('live-resume-session', 'claude', '/workspace/demo');
+    const { spawn, calls } = makeControllableSpawn();
+    const dependencies = makeDependencies(spawn);
+
+    const device = new FakeSocket();
+    connect(device, dependencies);
+
+    // A run was in flight for message A when the server restarted.
+    sendChat(device, 'live-resume-session', 'A');
+    await settle();
+    assert.equal(calls.length, 1);
+    chatRunRegistry.clearAll();
+    connectedClients.clear();
+    reconcileInterruptedRuns();
+    assert.equal(activeRunsDb.getInterrupted('live-resume-session').length, 1);
+
+    // After the restart the user sends a NEW message first, starting a fresh
+    // live run, and only then clicks Resume.
+    const reconnected = new FakeSocket();
+    connect(reconnected, dependencies);
+    sendChat(reconnected, 'live-resume-session', 'new-msg');
+    await settle();
+    assert.equal(calls.length, 2, 'the new message started its own run');
+    assert.equal(calls[1]?.command, 'new-msg');
+
+    resume(reconnected, 'live-resume-session');
+    await settle();
+
+    // A run is already live, so the interrupted A queues behind it (no separate
+    // dispatcher) and is reported resumed.
+    assert.equal(reconnected.framesOfKind('chat_resumed')[0]?.resumed, 1);
+    assert.equal(calls.length, 2, 'resume did not start a second concurrent run');
+    assert.equal(chatRunRegistry.getPendingCount('live-resume-session'), 1);
+
+    // Finishing the live run drains the queued (resumed) A next — nothing lost.
+    finishRun(calls[1] as SpawnCall);
+    await settle();
+    assert.equal(calls.length, 3);
+    assert.equal(calls[2]?.command, 'A');
+
+    finishRun(calls[2] as SpawnCall);
+    await settle();
+    assert.equal(activeRunsDb.getBySession('live-resume-session').length, 0);
+    assert.equal(reconnected.protocolErrors().length, 0);
+  });
+});
+
+test('resume that overflows the queue mid-replay surfaces QUEUE_FULL and keeps the unreplayed message resumable (not lost)', async () => {
+  await withIsolatedDatabase(async () => {
+    sessionsDb.createAppSession('overflow-session', 'claude', '/workspace/demo');
+    const { spawn, calls } = makeControllableSpawn();
+    const dependencies = makeDependencies(spawn);
+
+    // Seed head + cap + 1 interrupted rows: 1 becomes the running head and 50
+    // fill the queue exactly to MAX_PENDING_MESSAGES_PER_SESSION (50), so the
+    // 52nd replayed message overflows.
+    const CAP = 50;
+    const total = CAP + 2;
+    for (let i = 0; i < total; i += 1) {
+      activeRunsDb.recordQueued({
+        sessionId: 'overflow-session', provider: 'claude', providerSessionId: null,
+        content: `m${i}`, options: {}, userId: null, enqueuedAt: 1000 + i,
+      });
+    }
+    activeRunsDb.markAllInterrupted();
+    assert.equal(activeRunsDb.getInterrupted('overflow-session').length, total);
+
+    const device = new FakeSocket();
+    connect(device, dependencies);
+    resume(device, 'overflow-session');
+    await settle();
+
+    // The overflow is surfaced VISIBLY as QUEUE_FULL, never silently dropped...
+    const queueFull = device.protocolErrors().filter((frame) => frame.code === 'QUEUE_FULL');
+    assert.equal(queueFull.length, 1);
+    // ...and the un-replayed message keeps its interrupted marker (still resumable).
+    const remaining = activeRunsDb.getInterrupted('overflow-session');
+    assert.equal(remaining.length, 1);
+    assert.equal(remaining[0]?.content, `m${total - 1}`);
+    // resumed count = the head + the cap that were accepted.
+    assert.equal(device.framesOfKind('chat_resumed')[0]?.resumed, CAP + 1);
+
+    // Drain everything that was accepted so nothing dangles.
+    let index = 0;
+    while (chatRunRegistry.isProcessing('overflow-session')) {
+      finishRun(calls[index] as SpawnCall);
+      index += 1;
+      await settle(2);
+    }
+    assert.equal(calls.length, CAP + 1, 'head + cap runs were dispatched');
+  });
+});

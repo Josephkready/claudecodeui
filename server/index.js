@@ -1339,6 +1339,9 @@ async function startServer() {
             shuttingDown = true;
 
             try {
+                console.log('[Shutdown] Signal received; draining active chat runs before exit', {
+                    timeoutMs: CHAT_DRAIN_TIMEOUT_MS,
+                });
                 chatRunRegistry.beginDrain();
                 const drainResult = await chatRunRegistry.waitForActiveRuns(CHAT_DRAIN_TIMEOUT_MS);
                 if (drainResult.drained) {

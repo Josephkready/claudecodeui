@@ -334,7 +334,9 @@ async function handleChatSend(
     // The server has begun its shutdown drain: new runs are refused so an
     // imminent restart cannot guillotine this turn mid-stream. Surfaced visibly
     // (never a silent drop) so the client keeps the message and can retry once
-    // the server is back (issue #70).
+    // the server is back (issue #70). Logged server-side too, mirroring the
+    // queue-full branch below, so a drain refusal is observable during a deploy.
+    console.warn('[Chat] Refusing send during shutdown drain', { sessionId });
     sendProtocolError(
       ws,
       'SERVER_DRAINING',
@@ -462,6 +464,7 @@ async function handleChatResume(
     if (result.action === 'draining') {
       // Server is shutting down again mid-resume: stop, leaving the remaining
       // interrupted markers in place so they stay resumable after the restart.
+      console.warn('[Chat] Refusing resume during shutdown drain', { sessionId });
       sendProtocolError(
         ws,
         'SERVER_DRAINING',
@@ -484,9 +487,20 @@ async function handleChatResume(
       break;
     }
 
-    // start or queued: the message now owns a fresh live journal row, so the old
-    // interrupted marker can be retired.
-    activeRunsDb.remove(row.id);
+    // start or queued: the message now owns a fresh live journal row (inserted
+    // by submitMessage), so retire the old interrupted marker. Order matters —
+    // the new row is written BEFORE this delete, so a hard kill in between leaves
+    // a harmless duplicate (re-surfaced on the next reconcile) rather than losing
+    // the message. Best-effort: a DB failure here must NOT abort the resume,
+    // which has already registered/queued the live run — throwing would skip the
+    // trailing driveRunAndDrain and wedge the session (running forever, its queue
+    // never drained). The new row carries the work forward regardless.
+    try {
+      activeRunsDb.remove(row.id);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      console.error('[Chat] Failed to retire interrupted marker on resume', { sessionId, error: messageText });
+    }
     resumed += 1;
     if (result.action === 'start') {
       startedRun = result.run;
