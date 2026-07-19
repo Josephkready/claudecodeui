@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import type { AppTab, Project, ProjectSession } from '../../../../types/app';
 import { usePlugins } from '../../../../contexts/PluginsContext';
+import { resolveTitleCommit } from '../../utils/titleRename';
 
 type MainContentTitleProps = {
   activeTab: AppTab;
@@ -69,9 +70,9 @@ export default function MainContentTitle({
 
   const commitTitle = () => {
     setIsEditingTitle(false);
-    const trimmed = titleDraft.trim();
-    if (selectedSession && trimmed && trimmed !== sessionTitle) {
-      void onRenameSession(selectedSession.id, trimmed);
+    const nextTitle = resolveTitleCommit(titleDraft, sessionTitle);
+    if (selectedSession && nextTitle) {
+      void onRenameSession(selectedSession.id, nextTitle);
     }
   };
 

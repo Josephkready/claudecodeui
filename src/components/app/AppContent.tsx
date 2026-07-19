@@ -147,7 +147,14 @@ function AppContentInner() {
   const handleRenameSession = useCallback(
     async (targetSessionId: string, summary: string) => {
       try {
-        await api.renameSession(targetSessionId, summary);
+        // `authenticatedFetch` resolves (never throws) on non-2xx, so an HTTP
+        // failure must be checked explicitly — otherwise a failed rename would
+        // be treated as success and refresh anyway.
+        const response = await api.renameSession(targetSessionId, summary);
+        if (!response.ok) {
+          console.error('[AppContent] Failed to rename session:', response.status);
+          return;
+        }
         await refreshProjectsSilently();
       } catch (error) {
         console.error('[AppContent] Failed to rename session:', error);
