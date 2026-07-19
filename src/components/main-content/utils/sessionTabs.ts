@@ -40,3 +40,15 @@ export const SESSION_TAB_STATUS_DOT: Record<ConversationStatus, string | null> =
   done: 'bg-sky-500',
   recent: null,
 };
+
+/**
+ * Tailwind border color per status, used to outline each session tab in its
+ * status color. `recent` gets a transparent border so every pill keeps the same
+ * border width (no layout shift) while only status-bearing tabs are tinted.
+ */
+export const SESSION_TAB_STATUS_BORDER: Record<ConversationStatus, string> = {
+  blocked: 'border-amber-500',
+  running: 'border-emerald-500',
+  done: 'border-sky-500',
+  recent: 'border-transparent',
+};
