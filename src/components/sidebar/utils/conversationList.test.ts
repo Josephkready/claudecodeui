@@ -136,6 +136,11 @@ test('client-driven status wins over server liveStatus (no regression for cloudc
   // Client blocked outranks a server "working".
   const p2 = project('p2', [session('s', 'x', { liveStatus: 'working' })]);
   assert.equal(buildConversationList([p2], blockedSessions('s'), null)[0].status, 'blocked');
+
+  // A live (non-blocked) client run short-circuits before the server "blocked"
+  // check is ever reached — locks in the check order so a reorder can't regress it.
+  const p3 = project('p3', [session('s', 'x', { liveStatus: 'blocked' })]);
+  assert.equal(buildConversationList([p3], activeSessions('s'), null)[0].status, 'running');
 });
 
 test('server "blocked" outranks Done, but Done outranks server "working"', () => {

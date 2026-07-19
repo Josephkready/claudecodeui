@@ -29,10 +29,19 @@ const WORKING_WINDOW_MS = 15_000;
 // abandoned (closed without answering) and let it fall back to idle history.
 const AWAITING_INPUT_WINDOW_MS = 5 * 60_000;
 
-// Bytes read from the end of the transcript. A handful of JSONL events fit
-// easily, and it is large enough that the last complete record survives even
-// when the leading (partial) line is unparseable.
-const LIVE_STATUS_TAIL_BYTES = 64 * 1024;
+// Initial bytes read from the end of the transcript. A handful of ordinary
+// JSONL events fit easily. The final event can be far larger than this, though
+// — a big `Write`/`Edit` tool_use embeds the whole file body — so when the
+// slice lands entirely inside one oversized last line and parses nothing,
+// resolveSessionLiveStatus grows the window (below) rather than miss a
+// permission-pending large write.
+const LIVE_STATUS_TAIL_BYTES = 128 * 1024;
+
+// Upper bound on the grow-the-window retry. A pathological final event (writing
+// a multi-MB file) beyond this is left unclassified rather than slurped whole on
+// every projects fetch — an acceptable miss for an extreme edge versus the cost
+// of reading megabytes per session.
+const LIVE_STATUS_MAX_TAIL_BYTES = 4 * 1024 * 1024;
 
 /** Parses the JSONL tail, skipping blank and (often truncated) unparseable lines. */
 function parseTailEvents(tail: string): AnyRecord[] {
@@ -60,8 +69,7 @@ function parseTailEvents(tail: string): AnyRecord[] {
  * signal that the agent is parked waiting on input rather than still producing
  * output. Plan mode's `ExitPlanMode` is itself a tool_use, so it is covered too.
  */
-function tailEndsAwaitingUserInput(tail: string): boolean {
-  const events = parseTailEvents(tail);
+function eventsEndAwaitingUserInput(events: AnyRecord[]): boolean {
   if (events.length === 0) {
     return false;
   }
@@ -106,18 +114,12 @@ function tailEndsAwaitingUserInput(tail: string): boolean {
   return false;
 }
 
-/**
- * Pure classifier: maps a transcript tail plus its mtime to a live status.
- *
- * Exported for unit testing so crafted tails / mtimes can be asserted without
- * touching disk.
- */
-export function classifyClaudeLiveStatus(tail: string, mtimeMs: number, nowMs: number): SessionLiveStatus {
+function classifyFromEvents(events: AnyRecord[], mtimeMs: number, nowMs: number): SessionLiveStatus {
   const ageMs = nowMs - mtimeMs;
 
   // Awaiting user input (permission / plan approval / a parked tool) needs
   // attention and outranks everything else while it is still recent enough.
-  if (ageMs <= AWAITING_INPUT_WINDOW_MS && tailEndsAwaitingUserInput(tail)) {
+  if (ageMs <= AWAITING_INPUT_WINDOW_MS && eventsEndAwaitingUserInput(events)) {
     return 'blocked';
   }
 
@@ -128,6 +130,16 @@ export function classifyClaudeLiveStatus(tail: string, mtimeMs: number, nowMs: n
 
   // Old history, or a stale/abandoned awaiting-input turn.
   return 'idle';
+}
+
+/**
+ * Pure classifier: maps a transcript tail plus its mtime to a live status.
+ *
+ * Exported for unit testing so crafted tails / mtimes can be asserted without
+ * touching disk.
+ */
+export function classifyClaudeLiveStatus(tail: string, mtimeMs: number, nowMs: number): SessionLiveStatus {
+  return classifyFromEvents(parseTailEvents(tail), mtimeMs, nowMs);
 }
 
 /**
@@ -163,14 +175,23 @@ export async function resolveSessionLiveStatus(
       return 'idle';
     }
 
-    const { mtimeMs } = await stat(jsonlPath);
+    const { mtimeMs, size } = await stat(jsonlPath);
     // Fast path: an old transcript is idle history — skip the tail read.
     if (nowMs - mtimeMs > AWAITING_INPUT_WINDOW_MS) {
       return 'idle';
     }
 
-    const tail = await readFileTail(jsonlPath, LIVE_STATUS_TAIL_BYTES);
-    return classifyClaudeLiveStatus(tail, mtimeMs, nowMs);
+    // Read the transcript tail, growing the window if the slice fell entirely
+    // inside one oversized final event (a large Write/Edit tool_use) and parsed
+    // nothing — otherwise a permission-pending large write would be missed and
+    // never ranked blocked. Bounded by the file size and a hard cap.
+    let windowBytes = LIVE_STATUS_TAIL_BYTES;
+    let events = parseTailEvents(await readFileTail(jsonlPath, windowBytes));
+    while (events.length === 0 && windowBytes < size && windowBytes < LIVE_STATUS_MAX_TAIL_BYTES) {
+      windowBytes = Math.min(windowBytes * 4, LIVE_STATUS_MAX_TAIL_BYTES);
+      events = parseTailEvents(await readFileTail(jsonlPath, windowBytes));
+    }
+    return classifyFromEvents(events, mtimeMs, nowMs);
   } catch {
     return 'idle';
   }

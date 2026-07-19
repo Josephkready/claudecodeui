@@ -9,7 +9,7 @@ import {
 } from '@/modules/providers/index.js';
 import { WS_OPEN_STATE, connectedClients } from '@/modules/websocket/index.js';
 import type { RealtimeClientConnection } from '@/shared/types.js';
-import { AppError } from '@/shared/utils.js';
+import { AppError, mapWithConcurrency } from '@/shared/utils.js';
 
 type SessionSummary = {
   id: string;
@@ -101,6 +101,10 @@ export type ProjectSessionsPageApiView = {
 
 const DEFAULT_PROJECT_SESSIONS_PAGE_SIZE = 20;
 const MAX_PROJECT_SESSIONS_PAGE_SIZE = 200;
+// Bound the per-page live-status disk fan-out (stat + tail read per session). A
+// page can be up to MAX_PROJECT_SESSIONS_PAGE_SIZE, so a raw Promise.all could
+// open that many file handles at once. Mirrors the synchronizer's bounded fan-out.
+const LIVE_STATUS_SCAN_CONCURRENCY = 12;
 
 /**
  * Generate better display name from path.
@@ -177,21 +181,19 @@ async function buildSessionSummariesWithLiveStatus(
   rows: SessionRepositoryRow[],
 ): Promise<SessionSummary[]> {
   const nowMs = Date.now();
-  return Promise.all(
-    rows.map(async (row) => {
-      const summary = mapSessionRowToSummary(row);
-      summary.liveStatus = await resolveSessionLiveStatus(
-        {
-          provider: row.provider,
-          sessionId: row.session_id,
-          jsonlPath: row.jsonl_path ?? null,
-          projectPath: row.project_path ?? null,
-        },
-        nowMs,
-      );
-      return summary;
-    }),
-  );
+  return mapWithConcurrency(rows, LIVE_STATUS_SCAN_CONCURRENCY, async (row) => {
+    const summary = mapSessionRowToSummary(row);
+    summary.liveStatus = await resolveSessionLiveStatus(
+      {
+        provider: row.provider,
+        sessionId: row.session_id,
+        jsonlPath: row.jsonl_path ?? null,
+        projectPath: row.project_path ?? null,
+      },
+      nowMs,
+    );
+    return summary;
+  });
 }
 
 function readProjectSessionsIncludingArchived(projectPath: string): ProjectSessionsPageResult {

@@ -72,6 +72,15 @@ test('a resolved turn older than the working window is idle', () => {
   assert.equal(classifyClaudeLiveStatus(ACTIVE_TAIL, NOW - 20 * SECONDS, NOW), 'idle');
 });
 
+test('window boundaries are inclusive (<=): exactly at the edge still counts', () => {
+  // WORKING_WINDOW_MS = 15_000ms: at the edge is working, one ms past is idle.
+  assert.equal(classifyClaudeLiveStatus(ACTIVE_TAIL, NOW - 15_000, NOW), 'working');
+  assert.equal(classifyClaudeLiveStatus(ACTIVE_TAIL, NOW - 15_001, NOW), 'idle');
+  // AWAITING_INPUT_WINDOW_MS = 300_000ms: at the edge is blocked, one ms past is idle.
+  assert.equal(classifyClaudeLiveStatus(AWAITING_TAIL, NOW - 300_000, NOW), 'blocked');
+  assert.equal(classifyClaudeLiveStatus(AWAITING_TAIL, NOW - 300_001, NOW), 'idle');
+});
+
 test('empty / whitespace tail with a fresh mtime is working (nothing pending)', () => {
   assert.equal(classifyClaudeLiveStatus('', NOW - 1 * SECONDS, NOW), 'working');
   assert.equal(classifyClaudeLiveStatus('  \n\n', NOW - 1 * SECONDS, NOW), 'working');
@@ -132,6 +141,27 @@ test('resolveSessionLiveStatus reports working for a fresh, non-waiting transcri
       projectPath: null,
     });
     assert.equal(status, 'working');
+  });
+});
+
+test('resolveSessionLiveStatus grows the tail window for a large final tool_use (still blocked)', async () => {
+  // A final Write tool_use whose JSON line far exceeds the initial 128KB read
+  // window: the slice lands inside that one oversized line and parses nothing,
+  // so the classifier must grow the window rather than miss the pending write.
+  const bigInput = 'x'.repeat(300 * 1024);
+  const hugeToolUse = JSON.stringify({
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'big', name: 'Write', input: { content: bigInput } }] },
+  });
+  const contents = `${[assistantText('starting'), hugeToolUse].join('\n')}\n`;
+  await withTempTranscript(contents, async (jsonlPath) => {
+    const status = await resolveSessionLiveStatus({
+      provider: 'claude',
+      sessionId: 'big-sess',
+      jsonlPath,
+      projectPath: null,
+    });
+    assert.equal(status, 'blocked');
   });
 });
 
