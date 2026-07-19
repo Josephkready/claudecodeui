@@ -10,11 +10,14 @@ import { useChatProviderState } from '../hooks/useChatProviderState';
 import { useChatSessionState } from '../hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '../hooks/useChatRealtimeHandlers';
 import { useChatComposerState } from '../hooks/useChatComposerState';
+import { useInterruptedResume } from '../hooks/useInterruptedResume';
 import { useSessionStore } from '../../../stores/useSessionStore';
+import { shouldOfferResume } from '../utils/interruptedResume';
 
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
 import CommandResultModal from './subcomponents/CommandResultModal';
+import { InterruptedRunBanner } from './subcomponents/InterruptedRunBanner';
 
 function ChatInterface({
   selectedProject,
@@ -280,6 +283,13 @@ function ChatInterface({
   // overlapping the last message.
   const hasActivityIndicator = Boolean(sessionActivity && pendingPermissionRequests.length === 0);
 
+  // Surface a session whose in-flight/queued work was stranded by a server
+  // restart, with a one-click resume (issue #70). Fully decoupled from the
+  // normal chat processing path — it only reads the server's `interrupted`
+  // signal and, on click, asks the server to re-dispatch the stranded work.
+  const activeSessionId = currentSessionId || selectedSession?.id || null;
+  const { interrupted: runInterrupted, resume: resumeInterruptedRun } = useInterruptedResume(activeSessionId);
+
   if (!selectedProject) {
     const selectedProviderLabel =
       provider === 'codex'
@@ -344,6 +354,15 @@ function ChatInterface({
         />
 
         <div className="relative flex-shrink-0">
+          <InterruptedRunBanner
+            show={shouldOfferResume({ interrupted: runInterrupted, isProcessing })}
+            onResume={resumeInterruptedRun}
+            message={t('interruptedRun.message', {
+              defaultValue: 'This run was interrupted by a server restart.',
+            })}
+            resumeLabel={t('interruptedRun.resume', { defaultValue: 'Resume' })}
+          />
+
           {isUserScrolledUp && chatMessages.length > 0 && (
             <div className="pointer-events-none absolute -top-11 left-0 right-0 z-20 flex justify-center">
               <button

@@ -17,7 +17,7 @@ import {
     injectRouterBasenameIntoHtml,
 } from '@/shared/router-basename.js';
 import { closeSessionsWatcher, initializeSessionsWatcher, startAiSessionTitler, stopAiSessionTitler } from '@/modules/providers/index.js';
-import { createWebSocketServer } from '@/modules/websocket/index.js';
+import { createWebSocketServer, chatRunRegistry, reconcileInterruptedRuns } from '@/modules/websocket/index.js';
 
 import { getConnectableHost } from '../shared/networkHosts.js';
 
@@ -1248,6 +1248,15 @@ async function startServer() {
         // Initialize authentication database
         await initializeDatabase();
 
+        // Surface any chat runs stranded by a previous restart as interrupted +
+        // resumable, before the server accepts websocket traffic, so no in-flight
+        // or queued message is silently lost (#70).
+        try {
+            reconcileInterruptedRuns();
+        } catch (err) {
+            console.error('[ChatRunReconcile] Failed to reconcile interrupted runs:', err?.message || err);
+        }
+
         // Configure Web Push (VAPID keys)
         configureWebPush();
 
@@ -1306,8 +1315,44 @@ async function startServer() {
         });
 
         await closeSessionsWatcher();
+
+        // Graceful-drain window: on SIGTERM/SIGINT, stop accepting new chat runs
+        // and give in-flight runs a bounded chance to finish before the process
+        // exits, shrinking the window where a deploy/reconcile guillotines a turn
+        // mid-stream. Runs that finish clear their durable journal record; any
+        // still live at the deadline are killed with the process but survive as
+        // interrupted+resumable via the startup reconcile (#70).
+        const parsedDrainTimeout = Number.parseInt(process.env.CHAT_DRAIN_TIMEOUT_MS || '', 10);
+        const CHAT_DRAIN_TIMEOUT_MS = Number.isFinite(parsedDrainTimeout) && parsedDrainTimeout >= 0
+            ? parsedDrainTimeout
+            : 10000;
+
+        // Guard against a second signal (or SIGTERM then SIGINT) re-entering the
+        // shutdown sequence while the drain is still in progress.
+        let shuttingDown = false;
+
         // Clean up plugin processes on shutdown
         const shutdownRuntimeServices = async () => {
+            if (shuttingDown) {
+                return;
+            }
+            shuttingDown = true;
+
+            try {
+                chatRunRegistry.beginDrain();
+                const drainResult = await chatRunRegistry.waitForActiveRuns(CHAT_DRAIN_TIMEOUT_MS);
+                if (drainResult.drained) {
+                    console.log('[Shutdown] All chat runs drained cleanly before exit');
+                } else {
+                    console.warn('[Shutdown] Drain timed out with runs still active; they will resume after restart', {
+                        remaining: drainResult.remaining,
+                        timeoutMs: CHAT_DRAIN_TIMEOUT_MS,
+                    });
+                }
+            } catch (err) {
+                console.error('[Shutdown] Error draining chat runs:', err?.message || err);
+            }
+
             try {
                 stopStaleToolApprovalReaper();
             } catch (err) {
