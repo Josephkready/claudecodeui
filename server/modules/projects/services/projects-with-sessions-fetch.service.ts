@@ -2,10 +2,14 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
-import { sessionSynchronizerService } from '@/modules/providers/index.js';
+import {
+  resolveSessionLiveStatus,
+  sessionSynchronizerService,
+  type SessionLiveStatus,
+} from '@/modules/providers/index.js';
 import { WS_OPEN_STATE, connectedClients } from '@/modules/websocket/index.js';
 import type { RealtimeClientConnection } from '@/shared/types.js';
-import { AppError } from '@/shared/utils.js';
+import { AppError, mapWithConcurrency } from '@/shared/utils.js';
 
 type SessionSummary = {
   id: string;
@@ -24,12 +28,20 @@ type SessionSummary = {
   // watcher (the row's provider id equals its app id). Lets the sidebar mark
   // externally-driven sessions whose live status cloudcli can't know.
   origin: 'cli' | 'cloudcli';
+  // Server-detected live status for sessions cloudcli didn't launch (#21): a
+  // bare-terminal `claude` writing the same transcript. Lets the Conversations
+  // list rank terminal sessions (blocked/working) like cloudcli-driven ones;
+  // client-driven status still wins for sessions cloudcli launched. Defaults to
+  // 'idle' and is filled in from the transcript on disk.
+  liveStatus: SessionLiveStatus;
 };
 
 type SessionRepositoryRow = {
   provider: string;
   session_id: string;
   provider_session_id?: string | null;
+  jsonl_path?: string | null;
+  project_path?: string | null;
   custom_name?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
@@ -89,6 +101,10 @@ export type ProjectSessionsPageApiView = {
 
 const DEFAULT_PROJECT_SESSIONS_PAGE_SIZE = 20;
 const MAX_PROJECT_SESSIONS_PAGE_SIZE = 200;
+// Bound the per-page live-status disk fan-out (stat + tail read per session). A
+// page can be up to MAX_PROJECT_SESSIONS_PAGE_SIZE, so a raw Promise.all could
+// open that many file handles at once. Mirrors the synchronizer's bounded fan-out.
+const LIVE_STATUS_SCAN_CONCURRENCY = 12;
 
 /**
  * Generate better display name from path.
@@ -149,13 +165,43 @@ function mapSessionRowToSummary(row: SessionRepositoryRow): SessionSummary {
     // before that migration read as 'cli'. The badge copy is deliberately hedged
     // ("not driven by cloudcli") rather than asserting a terminal origin.
     origin: row.provider_session_id === row.session_id ? 'cli' : 'cloudcli',
+    // Placeholder; the live variant (buildSessionSummariesWithLiveStatus) fills
+    // this in from the transcript on disk. Archived/history reads keep 'idle'.
+    liveStatus: 'idle',
   };
+}
+
+/**
+ * Maps rows to summaries and fills each `liveStatus` from the transcript on disk
+ * in parallel. Sharing one `nowMs` keeps every row in a page classified against
+ * the same clock. Live-status detection is best-effort (defaults to 'idle'), so
+ * a slow or missing transcript never fails the page.
+ */
+async function buildSessionSummariesWithLiveStatus(
+  rows: SessionRepositoryRow[],
+): Promise<SessionSummary[]> {
+  const nowMs = Date.now();
+  return mapWithConcurrency(rows, LIVE_STATUS_SCAN_CONCURRENCY, async (row) => {
+    const summary = mapSessionRowToSummary(row);
+    summary.liveStatus = await resolveSessionLiveStatus(
+      {
+        provider: row.provider,
+        sessionId: row.session_id,
+        jsonlPath: row.jsonl_path ?? null,
+        projectPath: row.project_path ?? null,
+      },
+      nowMs,
+    );
+    return summary;
+  });
 }
 
 function readProjectSessionsIncludingArchived(projectPath: string): ProjectSessionsPageResult {
   const rows = sessionsDb.getSessionsByProjectPathIncludingArchived(projectPath) as SessionRepositoryRow[];
 
   return {
+    // Archived sessions are history, not live — keep the 'idle' placeholder and
+    // skip the per-row disk probe.
     sessions: rows.map(mapSessionRowToSummary),
     total: rows.length,
     hasMore: false,
@@ -165,10 +211,10 @@ function readProjectSessionsIncludingArchived(projectPath: string): ProjectSessi
 /**
  * Reads one paginated project session slice from the DB and groups rows by provider.
  */
-function readProjectSessionsPageByPath(
+async function readProjectSessionsPageByPath(
   projectPath: string,
   options: SessionPaginationOptions = {},
-): ProjectSessionsPageResult {
+): Promise<ProjectSessionsPageResult> {
   const pagination = normalizeSessionPagination(options);
   const rows = sessionsDb.getSessionsByProjectPathPage(
     projectPath,
@@ -178,7 +224,7 @@ function readProjectSessionsPageByPath(
   const total = sessionsDb.countSessionsByProjectPath(projectPath);
 
   return {
-    sessions: rows.map(mapSessionRowToSummary),
+    sessions: await buildSessionSummariesWithLiveStatus(rows),
     total,
     hasMore: pagination.offset + rows.length < total,
   };
@@ -237,7 +283,7 @@ export async function getProjectsWithSessions(
         ? row.custom_project_name
         : await generateDisplayName(path.basename(projectPath) || projectPath, projectPath);
 
-    const sessionsPage = readProjectSessionsPageByPath(projectPath, {
+    const sessionsPage = await readProjectSessionsPageByPath(projectPath, {
       limit: options.sessionsLimit,
       offset: options.sessionsOffset,
     });
@@ -327,7 +373,7 @@ export async function getProjectSessionsPage(
     });
   }
 
-  const sessionsPage = readProjectSessionsPageByPath(projectRow.project_path, options);
+  const sessionsPage = await readProjectSessionsPageByPath(projectRow.project_path, options);
   return {
     projectId: projectRow.project_id,
     sessions: sessionsPage.sessions,

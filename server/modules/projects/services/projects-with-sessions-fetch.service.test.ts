@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -75,5 +75,37 @@ test('getProjectsWithSessions derives origin: cli for disk-discovered, cloudcli 
     assert.equal(byId.get('cli-sess')?.origin, 'cli', 'disk-discovered session is cli-driven');
     assert.equal(byId.get('app-pending')?.origin, 'cloudcli', 'app session with no provider id is cloudcli-driven');
     assert.equal(byId.get('app-mapped')?.origin, 'cloudcli', 'app session with a mapped provider id stays cloudcli-driven');
+  });
+});
+
+// The sidebar ranks terminal sessions from the server-derived liveStatus (#21),
+// so the wiring row -> resolveSessionLiveStatus -> summary.liveStatus must be
+// exercised end-to-end: a field-name typo or arg-order swap would slip past the
+// pure-classifier unit tests otherwise.
+test('getProjectsWithSessions derives liveStatus from the session transcript on disk', async () => {
+  await withIsolatedDatabase(async () => {
+    const transcriptDir = await mkdtemp(path.join(tmpdir(), 'live-status-wire-'));
+    const jsonlPath = path.join(transcriptDir, 'term.jsonl');
+    // Last event is an unanswered tool_use -> awaiting input -> blocked (fresh mtime).
+    const transcript = `${JSON.stringify({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
+    })}\n`;
+    await writeFile(jsonlPath, transcript, 'utf8');
+
+    projectsDb.createProjectPath('/workspace/live-proj', null);
+    // Disk-discovered session with a stored jsonl_path (7th arg).
+    sessionsDb.createSession('term-sess', 'claude', '/workspace/live-proj', undefined, undefined, undefined, jsonlPath);
+
+    try {
+      const session = (await getProjectsWithSessions({ skipSynchronization: true }))
+        .flatMap((project) => project.sessions)
+        .find((candidate) => candidate.id === 'term-sess');
+
+      assert.ok(session, 'the seeded session should appear in the projects payload');
+      assert.equal(session?.liveStatus, 'blocked', 'liveStatus is derived from the transcript tail (pending tool_use)');
+    } finally {
+      await rm(transcriptDir, { recursive: true, force: true });
+    }
   });
 });

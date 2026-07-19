@@ -44,6 +44,11 @@ export interface ProjectSession {
   // `cli` = discovered on disk from a terminal/CLI run. Server-derived; the
   // sidebar badges `cli` sessions since cloudcli can't know their live status.
   origin?: 'cli' | 'cloudcli';
+  // Server-detected live status for sessions cloudcli didn't launch (#21),
+  // derived from the transcript on disk (mtime recency + last-event inspection).
+  // The Conversations list ranks terminal sessions from this when they're absent
+  // from the client `activeSessions` map; client-driven status wins when present.
+  liveStatus?: 'blocked' | 'working' | 'idle';
   provider?: LLMProvider;
   __provider?: LLMProvider;
   // Tags the session with the owning project's DB `projectId` so UI handlers

@@ -102,6 +102,68 @@ test('isActive is true for running and blocked, false for done and recent', () =
   assert.equal(byId['s-rec'].isActive, false);
 });
 
+// --- Server-detected live status for terminal sessions cloudcli didn't launch (#21) ---
+
+test('server liveStatus "working" ranks a terminal session Running above idle rows', () => {
+  const p = project('p1', [
+    session('idle-newer', '2026-07-18T05:00:00Z'),
+    session('term-working', '2026-07-18T04:00:00Z', { liveStatus: 'working' }),
+  ]);
+
+  const list = buildConversationList([p], new Map(), null);
+
+  assert.deepEqual(list.map((item) => item.session.id), ['term-working', 'idle-newer']);
+  assert.deepEqual(list.map((item) => item.status), ['running', 'recent']);
+});
+
+test('server liveStatus "blocked" ranks a terminal session at the top (needs attention)', () => {
+  const p = project('p1', [
+    session('running', '2026-07-18T05:00:00Z', { liveStatus: 'working' }),
+    session('blocked', '2026-07-18T04:00:00Z', { liveStatus: 'blocked' }),
+  ]);
+
+  const list = buildConversationList([p], new Map(), null);
+
+  assert.deepEqual(list.map((item) => item.session.id), ['blocked', 'running']);
+  assert.deepEqual(list.map((item) => item.status), ['blocked', 'running']);
+});
+
+test('client-driven status wins over server liveStatus (no regression for cloudcli runs)', () => {
+  // Server says idle, but cloudcli has a live run → the client state is authoritative.
+  const p = project('p1', [session('s', 'x', { liveStatus: 'idle' })]);
+  assert.equal(buildConversationList([p], activeSessions('s'), null)[0].status, 'running');
+
+  // Client blocked outranks a server "working".
+  const p2 = project('p2', [session('s', 'x', { liveStatus: 'working' })]);
+  assert.equal(buildConversationList([p2], blockedSessions('s'), null)[0].status, 'blocked');
+
+  // A live (non-blocked) client run short-circuits before the server "blocked"
+  // check is ever reached — locks in the check order so a reorder can't regress it.
+  const p3 = project('p3', [session('s', 'x', { liveStatus: 'blocked' })]);
+  assert.equal(buildConversationList([p3], activeSessions('s'), null)[0].status, 'running');
+});
+
+test('server "blocked" outranks Done, but Done outranks server "working"', () => {
+  const blockedDone = session('bd', 'x', { liveStatus: 'blocked', ...completed('2026-07-18T03:00:00.000Z') });
+  assert.equal(buildConversationList([project('p', [blockedDone])], new Map(), null)[0].status, 'blocked');
+
+  const workingDone = session('wd', 'x', { liveStatus: 'working', ...completed('2026-07-18T03:00:00.000Z') });
+  assert.equal(buildConversationList([project('p', [workingDone])], new Map(), null)[0].status, 'done');
+});
+
+test('isActive reflects server live status for terminal sessions', () => {
+  const p = project('p1', [
+    session('s-working', 'x', { liveStatus: 'working' }),
+    session('s-blocked', 'x', { liveStatus: 'blocked' }),
+    session('s-idle', 'x', { liveStatus: 'idle' }),
+  ]);
+  const byId = Object.fromEntries(buildConversationList([p], new Map(), null).map((item) => [item.session.id, item]));
+
+  assert.equal(byId['s-working'].isActive, true);
+  assert.equal(byId['s-blocked'].isActive, true);
+  assert.equal(byId['s-idle'].isActive, false);
+});
+
 test('sorts newest first within a status band', () => {
   const p = project('p1', [
     session('older', '2026-07-17T00:00:00Z'),

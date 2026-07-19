@@ -5,6 +5,7 @@ import { promises as fsPromises } from 'node:fs';
 import chokidar, { type FSWatcher } from 'chokidar';
 
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
+import { resolveSessionLiveStatus } from '@/modules/providers/services/session-live-status.service.js';
 import { sessionSynchronizerService } from '@/modules/providers/services/session-synchronizer.service.js';
 import { WS_OPEN_STATE, connectedClients } from '@/modules/websocket/index.js';
 import type { LLMProvider } from '@/shared/types.js';
@@ -132,6 +133,17 @@ async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Prom
     ? project.custom_project_name
     : await generateDisplayName(path.basename(projectPath ?? '') || (projectPath ?? ''), projectPath);
 
+  // A transcript write is exactly when a terminal session's live status changes,
+  // so recompute it here and carry it on the delta (#21). The client merge keeps
+  // existing fields, so a delta that omitted it would leave the row's status
+  // stale until the next full /api/projects refresh.
+  const liveStatus = await resolveSessionLiveStatus({
+    provider: row.provider,
+    sessionId: row.session_id,
+    jsonlPath: row.jsonl_path ?? null,
+    projectPath: row.project_path ?? null,
+  });
+
   return JSON.stringify({
     kind: 'session_upserted',
     sessionId: row.session_id,
@@ -147,6 +159,7 @@ async function buildSessionUpsertedEvent(updatedProviderSessionId: string): Prom
       // renders not-Done until the next full /api/projects refresh.
       last_completed_at: row.last_completed_at,
       last_viewed_at: row.last_viewed_at,
+      liveStatus,
     },
     project: project
       ? {
