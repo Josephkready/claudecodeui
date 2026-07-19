@@ -99,6 +99,10 @@ test('POST /api/agent (stream:false) returns assistant messages and token totals
     // Only the two assistant `kind:'text'` frames survive filtering — the
     // `thinking` status frame and the initial session status are excluded.
     assert.equal(body.messages.length, MOCK_ASSISTANT_FRAME_COUNT);
+    assert.ok(
+      !body.messages.some((m) => m.kind === 'status'),
+      'status/thinking frames must be filtered out of messages',
+    );
     for (const msg of body.messages) {
       assert.equal(msg.kind, 'text');
       assert.equal(msg.role, 'assistant');
@@ -130,6 +134,11 @@ test('POST /api/agent (stream:true) emits SSE frames terminated by done', async 
     assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/);
 
     const frames = parseSseFrames(await response.text());
+
+    // The initial status frame echoes the resolved project path.
+    const statusFrame = frames.find((f) => f.type === 'status');
+    assert.ok(statusFrame, 'expected an initial status frame');
+    assert.equal(statusFrame.projectPath, projectPath);
 
     // The session id is announced as its own frame on the streaming path.
     const sessionFrame = frames.find((f) => f.type === 'session-id');

@@ -8,11 +8,12 @@
  * drives the exact writer contract every real provider uses: `setSessionId()`
  * followed by a series of normalized `kind`-frames.
  *
- * Transport parity: like the Codex adapter's `sendMessage()`, frames are handed
- * to the writer as objects when the writer marks itself object-accepting
- * (`isSSEStreamWriter` / `isWebSocketWriter`) and as JSON strings otherwise
- * (e.g. the non-streaming `ResponseCollector`). This deliberately exercises BOTH
- * the object path and the JSON-string path that silently regressed in #96.
+ * Frames are always handed to the writer as objects — the same as every real
+ * provider today (see `sendMessage()` in codex-send-message.js, which since #134
+ * calls `ws.send(data)` unconditionally rather than JSON-encoding for
+ * "unflagged" writers, the allow-list that was a root cause of #96). The
+ * `ResponseCollector`'s tolerance of stringified frames is a separate
+ * backward-compat shim, covered directly in agent-response-collector.test.js.
  */
 
 /** Assistant prose, split across frames the way real adapters chunk a reply. */
@@ -38,33 +39,23 @@ export const MOCK_TOKEN_BUDGET = {
  * @param {string} message - The user's task message (echoed only via logs).
  * @param {{ sessionId?: string|null }} [options] - Run options; `sessionId`
  *        seeds the emitted session id when provided.
- * @param {{ send: Function, setSessionId: Function, isSSEStreamWriter?: boolean,
- *        isWebSocketWriter?: boolean }} writer - The SSE / collector writer.
+ * @param {{ send: Function, setSessionId: Function }} writer - The SSE writer or
+ *        the non-streaming ResponseCollector.
  */
 export async function runMockAgentProvider(message, options = {}, writer) {
   const sessionId = options.sessionId || 'mock-session';
 
-  // Object for object-accepting transports (SSE/WebSocket), JSON string
-  // otherwise — mirrors the real Codex transport-detection behavior.
-  const emit = (frame) => {
-    if (writer.isSSEStreamWriter || writer.isWebSocketWriter) {
-      writer.send(frame);
-    } else {
-      writer.send(JSON.stringify(frame));
-    }
-  };
-
   writer.setSessionId(sessionId);
 
   // A non-assistant frame that must NOT appear in getAssistantMessages().
-  emit({ kind: 'status', text: 'thinking', sessionId });
+  writer.send({ kind: 'status', text: 'thinking', sessionId });
 
   for (const content of ASSISTANT_TEXT_PARTS) {
-    emit({ kind: 'text', role: 'assistant', content, sessionId });
+    writer.send({ kind: 'text', role: 'assistant', content, sessionId });
   }
 
   // Cumulative token-budget snapshot the collector reads for the token summary.
-  emit({ kind: 'status', text: 'token_budget', tokenBudget: { ...MOCK_TOKEN_BUDGET }, sessionId });
+  writer.send({ kind: 'status', text: 'token_budget', tokenBudget: { ...MOCK_TOKEN_BUDGET }, sessionId });
 
   return { sessionId };
 }

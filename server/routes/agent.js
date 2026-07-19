@@ -775,7 +775,9 @@ router.post('/', validateExternalApiKey, async (req, res) => {
 
   // The env-gated in-process `mock` provider is a test-only affordance (see
   // mock-agent-provider.js); it is only a valid provider when explicitly enabled
-  // and is otherwise rejected like any unknown provider.
+  // and is otherwise rejected like any unknown provider. Read live (not the
+  // import-frozen pattern of IS_PLATFORM/AUTH_DISABLED) so a test can toggle it
+  // per request after this module is already loaded.
   const mockProviderEnabled = process.env.AGENT_MOCK_PROVIDER === 'true';
   const allowedProviders = ['claude', 'cursor', 'codex', 'opencode'];
   if (mockProviderEnabled) {
