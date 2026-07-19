@@ -7,14 +7,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import SidebarHeader from './SidebarHeader';
 
 // Return the English string fallback (mirrors how i18next resolves these keys)
-// so aria-labels render their real text; object option bags fall through to the
-// key, which is fine because those labels only render once the menu is opened.
+// so labels render their real text; object option bags fall through to the key.
 const t = ((key: string, fallback?: unknown) =>
   typeof fallback === 'string' ? fallback : key) as never;
 
 const noop = () => {};
 
-const ARCHIVE_TRIGGER_LABEL = 'Archive old conversations';
+// The bulk "Archive older…" declutter action moved out of the sidebar header
+// into Settings → Data (#187); it must no longer appear here.
+const LEGACY_BULK_ARCHIVE_LABEL = 'Archive old conversations';
 
 function renderHeader(
   overrides: Partial<React.ComponentProps<typeof SidebarHeader>> = {},
@@ -30,13 +31,12 @@ function renderHeader(
     searchFilter: '',
     onSearchFilterChange: noop,
     onClearSearchFilter: noop,
-    searchMode: 'projects',
-    onSearchModeChange: noop,
+    sidebarOverlay: 'none',
+    onSetOverlay: noop,
     onRefresh: noop,
     isRefreshing: false,
     onCreateProject: noop,
     onCollapseSidebar: noop,
-    onBulkArchiveOlderThanDays: noop,
     t,
     ...overrides,
   };
@@ -44,16 +44,14 @@ function renderHeader(
   return renderToStaticMarkup(<SidebarHeader {...props} />);
 }
 
-test('the bulk archive-by-age control renders when there are active sessions', () => {
+test('the search + archived overlay toggles render when there are projects', () => {
   const markup = renderHeader({ projectsCount: 5 });
 
-  assert.ok(
-    markup.includes(ARCHIVE_TRIGGER_LABEL),
-    'expected the archive-old-conversations trigger to be present',
-  );
+  assert.ok(markup.includes('Search chats'), 'expected the full-text search toggle');
+  assert.ok(markup.includes('Archived'), 'expected the archived-overlay toggle');
 });
 
-test('the bulk archive-by-age control is hidden when there are no active sessions', () => {
+test('the search tools are hidden when there is nothing to show', () => {
   const markup = renderHeader({
     projectsCount: 0,
     runningSessionsCount: 0,
@@ -61,8 +59,28 @@ test('the bulk archive-by-age control is hidden when there are no active session
     isArchivedSessionsLoading: false,
   });
 
+  assert.ok(!markup.includes('Search chats'), 'no toggles when there is nothing active');
+});
+
+test('the legacy bulk archive-by-age control no longer lives in the header (#187)', () => {
+  const markup = renderHeader({ projectsCount: 5 });
+
   assert.ok(
-    !markup.includes(ARCHIVE_TRIGGER_LABEL),
-    'the declutter action must not appear when there is nothing active to archive',
+    !markup.includes(LEGACY_BULK_ARCHIVE_LABEL),
+    'the bulk declutter action moved to Settings → Data and must not render in the sidebar header',
+  );
+});
+
+test('the active overlay drives the search placeholder', () => {
+  const searchMarkup = renderHeader({ sidebarOverlay: 'search' });
+  assert.ok(
+    searchMarkup.includes('search.conversationsPlaceholder'),
+    'search overlay uses the conversation-search placeholder',
+  );
+
+  const archivedMarkup = renderHeader({ sidebarOverlay: 'archived' });
+  assert.ok(
+    archivedMarkup.includes('Search archived sessions...'),
+    'archived overlay uses the archived placeholder',
   );
 });

@@ -2,7 +2,10 @@ import type { LoadingProgress, Project, ProjectSession, LLMProvider } from '../.
 import type { SessionActivityMap } from '../../../hooks/useSessionProtection';
 
 export type ProjectSortOrder = 'name' | 'date' | 'count';
-export type SidebarSearchMode = 'projects' | 'conversations' | 'archived';
+// The unified sidebar shows Spaces + Conversations at once (`'none'`). Archived
+// browsing and full-text conversation search are no longer peer views — they open
+// as overlays over the two-section body. Replaces the old 3-way `SidebarSearchMode`.
+export type SidebarOverlay = 'none' | 'search' | 'archived';
 export type ArchivedProjectListItem = Project & { isArchived: true };
 
 export type SessionWithProvider = ProjectSession & {

@@ -1,8 +1,19 @@
+import { useEffect, useRef, useState } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import type { Project } from '../../../../types/app';
-import ActionMenu from '../../../../shared/view/ui/ActionMenu';
+import { Button } from '../../../../shared/view/ui';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from '../../../../shared/view/ui/Command';
+import { cn } from '../../../../lib/utils';
 import { buildNewConversationItems } from '../../utils/newConversation';
 
 type SidebarNewConversationButtonProps = {
@@ -17,8 +28,13 @@ type SidebarNewConversationButtonProps = {
 
 /**
  * "New conversation" action for the Conversations view. Since that view has no
- * inherent project, the button opens a picker of existing projects (plus a
- * "New project…" escape hatch); selecting one launches a fresh chat there.
+ * inherent project, the button opens a searchable, scrollable picker of existing
+ * projects (plus a "New project…" escape hatch); selecting one launches a fresh
+ * chat there.
+ *
+ * Built on the cmdk `Command` primitives (issue #186) rather than the old
+ * `ActionMenu`, which had no filter input and no scroll container — so a long
+ * folder list is now type-to-filter instead of an unbounded scroll.
  */
 export default function SidebarNewConversationButton({
   projects,
@@ -27,6 +43,34 @@ export default function SidebarNewConversationButton({
   className,
   t,
 }: SidebarNewConversationButtonProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
   const items = buildNewConversationItems({
     projects,
     onPickProject: onNewConversation,
@@ -37,15 +81,57 @@ export default function SidebarNewConversationButton({
   const label = t('conversations.newConversation', 'New conversation');
 
   return (
-    <ActionMenu
-      label={label}
-      ariaLabel={label}
-      items={items}
-      icon={MessageSquarePlus}
-      align="left"
-      variant="outline"
-      size="sm"
-      className={className}
-    />
+    <div ref={containerRef} className={cn('relative', className)}>
+      <Button
+        variant="outline"
+        size="sm"
+        aria-label={label}
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((open) => !open)}
+        className="w-full justify-center gap-1.5"
+      >
+        <MessageSquarePlus className="h-4 w-4" />
+        {label}
+      </Button>
+
+      {isOpen && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
+          <Command>
+            <CommandInput
+              autoFocus
+              placeholder={t('conversations.newConversationSearchPlaceholder', 'Search folders…')}
+            />
+            <CommandList>
+              <CommandEmpty>{t('conversations.newConversationNoResults', 'No folders found')}</CommandEmpty>
+              <CommandGroup>
+                {items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.key}>
+                      {item.showDividerBefore && <CommandSeparator />}
+                      <CommandItem
+                        value={`${item.label} ${item.description ?? ''} ${item.key}`}
+                        onSelect={() => {
+                          item.onSelect();
+                          setIsOpen(false);
+                        }}
+                      >
+                        {Icon && <Icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" />}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate">{item.label}</div>
+                          {item.description && (
+                            <div className="truncate text-xs text-muted-foreground">{item.description}</div>
+                          )}
+                        </div>
+                      </CommandItem>
+                    </div>
+                  );
+                })}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </div>
+      )}
+    </div>
   );
 }

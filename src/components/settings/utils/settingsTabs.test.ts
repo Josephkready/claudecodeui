@@ -16,6 +16,7 @@ const ALL_MAIN_TABS: Record<SettingsMainTab, true> = {
   api: true,
   voice: true,
   notifications: true,
+  data: true,
   about: true,
 };
 

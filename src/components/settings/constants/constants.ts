@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import {
   Bell,
   Bot,
+  Database,
   GitBranch,
   Info,
   KeyRound,
@@ -30,6 +31,7 @@ export const SETTINGS_MAIN_TABS: SettingsMainTabMeta[] = [
   { id: 'git', label: 'Git', keywords: 'git github commits', icon: GitBranch },
   { id: 'api', label: 'API Tokens', keywords: 'api tokens auth keys', icon: KeyRound },
   { id: 'notifications', label: 'Notifications', keywords: 'notifications alerts push', icon: Bell },
+  { id: 'data', label: 'Data', keywords: 'data maintenance archive cleanup declutter old conversations', icon: Database },
   { id: 'about', label: 'About', keywords: 'about version info', icon: Info },
 ];
 

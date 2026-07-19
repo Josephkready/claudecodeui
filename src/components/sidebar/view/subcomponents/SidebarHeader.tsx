@@ -1,11 +1,12 @@
-import { Archive, Clock, Folder, FolderPlus, MessageSquare, Plus, RefreshCw, Search, X, PanelLeftClose } from 'lucide-react';
+import { Archive, FolderPlus, Plus, RefreshCw, Search, X, PanelLeftClose } from 'lucide-react';
+import type { ComponentType } from 'react';
 import type { TFunction } from 'i18next';
 
-import { ActionMenu, Button, Input, Tooltip, type ActionMenuItem } from '../../../../shared/view/ui';
+import { Button, Input } from '../../../../shared/view/ui';
 import { CLOUDCLI_WORDMARK_FONT_FAMILY } from '../../../../constants/branding';
 import { IS_PLATFORM } from '../../../../constants/config';
 import { cn } from '../../../../lib/utils';
-import type { SidebarSearchMode } from '../../types/types';
+import type { SidebarOverlay } from '../../types/types';
 
 const MOD_KEY =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
@@ -21,15 +22,47 @@ type SidebarHeaderProps = {
   searchFilter: string;
   onSearchFilterChange: (value: string) => void;
   onClearSearchFilter: () => void;
-  searchMode: SidebarSearchMode;
-  onSearchModeChange: (mode: SidebarSearchMode) => void;
+  // Which overlay (search / archived) is layered over the two-section body.
+  sidebarOverlay: SidebarOverlay;
+  // Toggle an overlay on/off; passing the already-active overlay closes it.
+  onSetOverlay: (next: SidebarOverlay) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
-  onBulkArchiveOlderThanDays: (days: number) => void;
   t: TFunction;
 };
+
+// A compact toggle for the search / archived overlays. Reused across the
+// desktop and mobile headers so both stay in lockstep.
+function OverlayToggle({
+  icon: Icon,
+  label,
+  isActive,
+  onClick,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={isActive}
+      className={cn(
+        'flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-normal transition-all',
+        isActive
+          ? 'bg-background text-foreground shadow-sm ring-1 ring-border'
+          : 'bg-muted/50 text-muted-foreground hover:text-foreground',
+      )}
+    >
+      <Icon className="h-3 w-3" />
+      {label}
+    </button>
+  );
+}
 
 export default function SidebarHeader({
   isPWA,
@@ -42,49 +75,26 @@ export default function SidebarHeader({
   searchFilter,
   onSearchFilterChange,
   onClearSearchFilter,
-  searchMode,
-  onSearchModeChange,
+  sidebarOverlay,
+  onSetOverlay,
   onRefresh,
   isRefreshing,
   onCreateProject,
   onCollapseSidebar,
-  onBulkArchiveOlderThanDays,
   t,
 }: SidebarHeaderProps) {
   const showSearchTools = (projectsCount > 0 || runningSessionsCount > 0 || archivedSessionsCount > 0 || isArchivedSessionsLoading) && !isLoading;
-  const searchPlaceholder = searchMode === 'conversations'
+  const searchPlaceholder = sidebarOverlay === 'search'
     ? t('search.conversationsPlaceholder')
-    : searchMode === 'archived'
+    : sidebarOverlay === 'archived'
       ? t('search.archivedPlaceholder', 'Search archived sessions...')
       : t('projects.searchPlaceholder');
-  const runningBadgeText = runningSessionsCount > 99 ? '99+' : String(runningSessionsCount);
 
-  // Bulk "declutter old conversations" action. Each preset maps to a day
-  // threshold; the controller previews the affected count and confirms once
-  // (naming the count and age) before archiving, so the menu just signals intent.
-  const bulkArchiveItems: ActionMenuItem[] = [7, 30, 90].map((days) => ({
-    key: `older-than-${days}`,
-    icon: Archive,
-    label: t('archive.bulkByAgeOption', { days, defaultValue: 'Older than {{days}} days' }),
-    onSelect: () => onBulkArchiveOlderThanDays(days),
-  }));
+  const searchLabel = t('search.fullTextLabel', 'Search chats');
+  const archivedLabel = t('search.archivedLabel', 'Archived');
 
-  // Only offer the declutter action when the sidebar has projects (and thus
-  // potentially archivable sessions); it no-ops harmlessly if none qualify.
-  const bulkArchiveMenu = projectsCount > 0 ? (
-    <div className="flex justify-end">
-      <ActionMenu
-        label={t('archive.bulkByAgeLabel', 'Archive older…')}
-        ariaLabel={t('archive.bulkByAgeAriaLabel', 'Archive old conversations')}
-        icon={Clock}
-        items={bulkArchiveItems}
-        variant="ghost"
-        size="sm"
-        align="right"
-        triggerClassName="h-7 gap-1.5 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent/80 hover:text-foreground"
-      />
-    </div>
-  ) : null;
+  const toggleSearch = () => onSetOverlay(sidebarOverlay === 'search' ? 'none' : 'search');
+  const toggleArchived = () => onSetOverlay(sidebarOverlay === 'archived' ? 'none' : 'archived');
 
   const LogoBlock = () => (
     <div className="flex min-w-0 items-center gap-2.5">
@@ -161,59 +171,6 @@ export default function SidebarHeader({
         {/* Search bar */}
         {showSearchTools && (
           <div className="mt-2.5 space-y-2">
-            {/* Search mode toggle */}
-            <div className="flex rounded-lg bg-muted/50 p-0.5">
-              <button
-                onClick={() => onSearchModeChange('projects')}
-                aria-pressed={searchMode === 'projects'}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                  searchMode === 'projects'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Folder className="h-3 w-3" />
-                {t('search.modeProjects')}
-              </button>
-              <button
-                onClick={() => onSearchModeChange('conversations')}
-                aria-pressed={searchMode === 'conversations'}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                  searchMode === 'conversations'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <MessageSquare className="h-3 w-3" />
-                {t('search.modeConversations')}
-                {runningSessionsCount > 0 && (
-                  <span
-                    className="flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-semibold leading-none text-white"
-                    title={t('conversations.runningBadge', 'Running sessions')}
-                  >
-                    {runningBadgeText}
-                  </span>
-                )}
-              </button>
-              <Tooltip content={t('search.archiveOnlyTooltip', 'Archive only')} position="top">
-                <button
-                  onClick={() => onSearchModeChange('archived')}
-                  aria-pressed={searchMode === 'archived'}
-                  aria-label={t('search.archiveOnlyTooltip', 'Archive only')}
-                  title={t('search.archiveOnlyTooltip', 'Archive only')}
-                  className={cn(
-                    "flex items-center justify-center rounded-md px-2.5 py-1.5 text-xs font-normal transition-all",
-                    searchMode === 'archived'
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Archive className="h-3 w-3" />
-                </button>
-              </Tooltip>
-            </div>
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
               <Input
@@ -242,7 +199,12 @@ export default function SidebarHeader({
                 </kbd>
               )}
             </div>
-            {bulkArchiveMenu}
+            {/* Overlay toggles: full-text conversation search + archived browsing.
+                The two-section body (Spaces + Conversations) shows when neither is on. */}
+            <div className="flex items-center gap-1">
+              <OverlayToggle icon={Search} label={searchLabel} isActive={sidebarOverlay === 'search'} onClick={toggleSearch} />
+              <OverlayToggle icon={Archive} label={archivedLabel} isActive={sidebarOverlay === 'archived'} onClick={toggleArchived} />
+            </div>
           </div>
         )}
       </div>
@@ -288,58 +250,6 @@ export default function SidebarHeader({
         {/* Mobile search */}
         {showSearchTools && (
           <div className="mt-2.5 space-y-2">
-            <div className="flex rounded-lg bg-muted/50 p-0.5">
-              <button
-                onClick={() => onSearchModeChange('projects')}
-                aria-pressed={searchMode === 'projects'}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                  searchMode === 'projects'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Folder className="h-3 w-3" />
-                {t('search.modeProjects')}
-              </button>
-              <button
-                onClick={() => onSearchModeChange('conversations')}
-                aria-pressed={searchMode === 'conversations'}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
-                  searchMode === 'conversations'
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <MessageSquare className="h-3 w-3" />
-                {t('search.modeConversations')}
-                {runningSessionsCount > 0 && (
-                  <span
-                    className="flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-semibold leading-none text-white"
-                    title={t('conversations.runningBadge', 'Running sessions')}
-                  >
-                    {runningBadgeText}
-                  </span>
-                )}
-              </button>
-              <Tooltip content={t('search.archiveOnlyTooltip', 'Archive only')} position="top">
-                <button
-                  onClick={() => onSearchModeChange('archived')}
-                  aria-pressed={searchMode === 'archived'}
-                  aria-label={t('search.archiveOnlyTooltip', 'Archive only')}
-                  title={t('search.archiveOnlyTooltip', 'Archive only')}
-                  className={cn(
-                    "flex items-center justify-center rounded-md px-2.5 py-1.5 text-xs font-normal transition-all",
-                    searchMode === 'archived'
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Archive className="h-3 w-3" />
-                </button>
-              </Tooltip>
-            </div>
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
               <Input
@@ -359,7 +269,10 @@ export default function SidebarHeader({
                 </button>
               )}
             </div>
-            {bulkArchiveMenu}
+            <div className="flex items-center gap-1">
+              <OverlayToggle icon={Search} label={searchLabel} isActive={sidebarOverlay === 'search'} onClick={toggleSearch} />
+              <OverlayToggle icon={Archive} label={archivedLabel} isActive={sidebarOverlay === 'archived'} onClick={toggleArchived} />
+            </div>
           </div>
         )}
       </div>

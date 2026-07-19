@@ -5,7 +5,7 @@ import type { TFunction } from 'i18next';
 import { ScrollArea } from '../../../../shared/view/ui';
 import type { Project } from '../../../../types/app';
 import type { ConversationSearchResults, SearchProgress } from '../../hooks/useSidebarController';
-import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarSearchMode } from '../../types/types';
+import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarOverlay } from '../../types/types';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import { getAllSessions } from '../../utils/utils';
 
@@ -111,6 +111,28 @@ function formatCompactArchivedAge(dateString: string | null): string {
   return `${Math.floor(diffInHours / 24)}d`;
 }
 
+// Small label above each stacked section (Spaces / Conversations). Mirrors
+// herdr's two-section sidebar so both regions read as distinct at a glance.
+function SectionHeader({ label, count, badge }: { label: string; count?: number; badge?: number }) {
+  return (
+    <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-1 pt-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+        {label}
+      </span>
+      {typeof count === 'number' && count > 0 && (
+        <span className="text-[10px] font-normal text-muted-foreground/50">{count}</span>
+      )}
+      {typeof badge === 'number' && badge > 0 && (
+        <span
+          className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-semibold leading-none text-white"
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </div>
+  );
+}
+
 type SidebarContentProps = {
   isPWA: boolean;
   isMobile: boolean;
@@ -124,8 +146,8 @@ type SidebarContentProps = {
   searchFilter: string;
   onSearchFilterChange: (value: string) => void;
   onClearSearchFilter: () => void;
-  searchMode: SidebarSearchMode;
-  onSearchModeChange: (mode: SidebarSearchMode) => void;
+  sidebarOverlay: SidebarOverlay;
+  onSetOverlay: (next: SidebarOverlay) => void;
   conversationResults: ConversationSearchResults | null;
   isSearching: boolean;
   searchProgress: SearchProgress | null;
@@ -140,7 +162,6 @@ type SidebarContentProps = {
   isRefreshing: boolean;
   onCreateProject: () => void;
   onCollapseSidebar: () => void;
-  onBulkArchiveOlderThanDays: (days: number) => void;
   restartRequired: boolean;
   currentVersion: string;
   onShowSettings: () => void;
@@ -161,8 +182,8 @@ export default function SidebarContent({
   searchFilter,
   onSearchFilterChange,
   onClearSearchFilter,
-  searchMode,
-  onSearchModeChange,
+  sidebarOverlay,
+  onSetOverlay,
   conversationResults,
   isSearching,
   searchProgress,
@@ -175,16 +196,41 @@ export default function SidebarContent({
   isRefreshing,
   onCreateProject,
   onCollapseSidebar,
-  onBulkArchiveOlderThanDays,
   restartRequired,
   currentVersion,
   onShowSettings,
   projectListProps,
   t,
 }: SidebarContentProps) {
-  const showConversationSearch = searchMode === 'conversations' && searchFilter.trim().length >= 2;
+  const hasSearchQuery = searchFilter.trim().length >= 2;
   const hasPartialResults = conversationResults && conversationResults.results.length > 0;
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
+
+  const scrollAreaClass = 'flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2';
+
+  const conversationsList = (
+    <SidebarConversationsList
+      projects={projects}
+      activeSessions={projectListProps.activeSessions}
+      selectedSession={projectListProps.selectedSession}
+      currentTime={projectListProps.currentTime}
+      onSelect={(session, project) => {
+        projectListProps.onProjectSelect(project);
+        projectListProps.onSessionSelect(session, project.projectId);
+      }}
+      onNewConversation={projectListProps.onNewSession}
+      onCreateProject={onCreateProject}
+      editingSession={projectListProps.editingSession}
+      editingSessionName={projectListProps.editingSessionName}
+      onEditingSessionNameChange={projectListProps.onEditingSessionNameChange}
+      onStartEditingSession={projectListProps.onStartEditingSession}
+      onCancelEditingSession={projectListProps.onCancelEditingSession}
+      onSaveEditingSession={projectListProps.onSaveEditingSession}
+      onDeleteSession={projectListProps.onDeleteSession}
+      onArchiveSession={projectListProps.onArchiveSession}
+      t={t}
+    />
+  );
 
   return (
     <div
@@ -202,19 +248,30 @@ export default function SidebarContent({
         searchFilter={searchFilter}
         onSearchFilterChange={onSearchFilterChange}
         onClearSearchFilter={onClearSearchFilter}
-        searchMode={searchMode}
-        onSearchModeChange={onSearchModeChange}
+        sidebarOverlay={sidebarOverlay}
+        onSetOverlay={onSetOverlay}
         onRefresh={onRefresh}
         isRefreshing={isRefreshing}
         onCreateProject={onCreateProject}
         onCollapseSidebar={onCollapseSidebar}
-        onBulkArchiveOlderThanDays={onBulkArchiveOlderThanDays}
         t={t}
       />
 
-      <ScrollArea className="flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2">
-        {showConversationSearch ? (
-          isSearching && !hasPartialResults ? (
+      {sidebarOverlay === 'search' ? (
+        <ScrollArea className={scrollAreaClass}>
+          {!hasSearchQuery ? (
+            <div className="px-4 py-12 text-center md:py-8">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-muted md:mb-3">
+                <Search className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <h3 className="mb-2 text-base font-medium text-foreground md:mb-1">
+                {t('search.fullTextTitle', 'Search conversations')}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {t('search.fullTextPrompt', 'Type at least 2 characters to search message contents.')}
+              </p>
+            </div>
+          ) : isSearching && !hasPartialResults ? (
             <div className="px-4 py-12 text-center md:py-8">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-muted md:mb-3">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
@@ -308,31 +365,11 @@ export default function SidebarContent({
                 </div>
               ))}
             </div>
-          ) : null
-        ) : searchMode === 'conversations' ? (
-          <SidebarConversationsList
-            projects={projects}
-            activeSessions={projectListProps.activeSessions}
-            selectedSession={projectListProps.selectedSession}
-            currentTime={projectListProps.currentTime}
-            onSelect={(session, project) => {
-              projectListProps.onProjectSelect(project);
-              projectListProps.onSessionSelect(session, project.projectId);
-            }}
-            onNewConversation={projectListProps.onNewSession}
-            onCreateProject={onCreateProject}
-            editingSession={projectListProps.editingSession}
-            editingSessionName={projectListProps.editingSessionName}
-            onEditingSessionNameChange={projectListProps.onEditingSessionNameChange}
-            onStartEditingSession={projectListProps.onStartEditingSession}
-            onCancelEditingSession={projectListProps.onCancelEditingSession}
-            onSaveEditingSession={projectListProps.onSaveEditingSession}
-            onDeleteSession={projectListProps.onDeleteSession}
-            onArchiveSession={projectListProps.onArchiveSession}
-            t={t}
-          />
-        ) : searchMode === 'archived' ? (
-          isArchivedSessionsLoading ? (
+          ) : null}
+        </ScrollArea>
+      ) : sidebarOverlay === 'archived' ? (
+        <ScrollArea className={scrollAreaClass}>
+          {isArchivedSessionsLoading ? (
             <div className="px-4 py-12 text-center md:py-8">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-muted md:mb-3">
                 <div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
@@ -531,11 +568,33 @@ export default function SidebarContent({
                 </div>
               ))}
             </div>
-          )
-        ) : (
-          <SidebarProjectList {...projectListProps} />
-        )}
-      </ScrollArea>
+          )}
+        </ScrollArea>
+      ) : (
+        // Default view: Spaces (top) + Conversations (bottom), both visible at
+        // once — herdr's unified two-section sidebar. Fixed split; each region
+        // scrolls independently.
+        <div className="flex min-h-0 flex-1 flex-col">
+          <section
+            className="flex min-h-0 flex-col"
+            style={{ flexBasis: '40%', flexGrow: 0, flexShrink: 0 }}
+          >
+            <SectionHeader label={t('sections.spaces', 'Spaces')} count={projectListProps.filteredProjects.length} />
+            <ScrollArea className={scrollAreaClass}>
+              <SidebarProjectList {...projectListProps} />
+            </ScrollArea>
+          </section>
+
+          <div className="nav-divider" />
+
+          <section className="flex min-h-0 flex-1 flex-col">
+            <SectionHeader label={t('sections.conversations', 'Conversations')} badge={runningSessionsCount} />
+            <ScrollArea className={scrollAreaClass}>
+              {conversationsList}
+            </ScrollArea>
+          </section>
+        </div>
+      )}
 
       <SidebarFooter
         restartRequired={restartRequired}
