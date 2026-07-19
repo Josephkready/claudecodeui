@@ -1,8 +1,9 @@
 import { type ReactNode } from 'react';
-import { Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { Archive, ChevronRight, Folder, MessageSquare, RotateCcw, Search, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
-import { ScrollArea } from '../../../../shared/view/ui';
+import { cn } from '../../../../lib/utils';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger, ScrollArea } from '../../../../shared/view/ui';
 import type { Project } from '../../../../types/app';
 import type { ConversationSearchResults, SearchProgress } from '../../hooks/useSidebarController';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, SidebarOverlay } from '../../types/types';
@@ -111,17 +112,14 @@ function formatCompactArchivedAge(dateString: string | null): string {
   return `${Math.floor(diffInHours / 24)}d`;
 }
 
-// Small label above each stacked section (Spaces / Conversations). Mirrors
-// herdr's two-section sidebar so both regions read as distinct at a glance.
-function SectionHeader({ label, count, badge }: { label: string; count?: number; badge?: number }) {
+// Small label above the Conversations section. The Spaces section renders its
+// own header (a collapsible trigger with a chevron) rather than using this.
+function SectionHeader({ label, badge }: { label: string; badge?: number }) {
   return (
     <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-1 pt-2">
       <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
         {label}
       </span>
-      {typeof count === 'number' && count > 0 && (
-        <span className="text-[10px] font-normal text-muted-foreground/50">{count}</span>
-      )}
       {typeof badge === 'number' && badge > 0 && (
         <span
           className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500 px-1 text-[9px] font-semibold leading-none text-white"
@@ -143,6 +141,10 @@ type SidebarContentProps = {
   archivedSessions: ArchivedSessionListItem[];
   archivedSessionsCount: number;
   isArchivedSessionsLoading: boolean;
+  // Whether the Spaces section is expanded. Persisted as a UI preference so the
+  // collapsed/expanded choice survives reloads; defaults to collapsed.
+  spacesExpanded: boolean;
+  onSpacesExpandedChange: (open: boolean) => void;
   searchFilter: string;
   onSearchFilterChange: (value: string) => void;
   onClearSearchFilter: () => void;
@@ -179,6 +181,8 @@ export default function SidebarContent({
   archivedSessions,
   archivedSessionsCount,
   isArchivedSessionsLoading,
+  spacesExpanded,
+  onSpacesExpandedChange,
   searchFilter,
   onSearchFilterChange,
   onClearSearchFilter,
@@ -207,6 +211,10 @@ export default function SidebarContent({
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
 
   const scrollAreaClass = 'flex-1 overflow-y-auto overscroll-contain md:px-1.5 md:py-2';
+  // Inside CollapsibleContent the scroll region sits in a plain block (the
+  // primitive's overflow wrapper), so it fills the grid row via h-full rather
+  // than flex-1, which would be inert there.
+  const spacesScrollAreaClass = 'h-full overflow-y-auto overscroll-contain md:px-1.5 md:py-2';
 
   const conversationsList = (
     <SidebarConversationsList
@@ -571,19 +579,45 @@ export default function SidebarContent({
           )}
         </ScrollArea>
       ) : (
-        // Default view: Spaces (top) + Conversations (bottom), both visible at
-        // once — herdr's unified two-section sidebar. Fixed split; each region
-        // scrolls independently.
+        // Default view: Spaces (collapsible, collapsed by default) stacked above
+        // Conversations (always visible) — herdr's two-section sidebar. Spaces
+        // only claims the 40% split when expanded; each region scrolls independently.
         <div className="flex min-h-0 flex-1 flex-col">
-          <section
-            className="flex min-h-0 flex-col"
-            style={{ flexBasis: '40%', flexGrow: 0, flexShrink: 0 }}
+          {/* The whole Spaces region collapses behind one chevron (not per-space).
+              It's collapsed by default and its state is persisted, so when closed
+              it shrinks to just the header and hands the freed height to
+              Conversations below. Only expanded does it claim the 40% split. */}
+          <Collapsible
+            open={spacesExpanded}
+            onOpenChange={onSpacesExpandedChange}
+            className="flex min-h-0 flex-shrink-0 flex-col"
+            style={spacesExpanded ? { flexBasis: '40%', flexGrow: 0, flexShrink: 0 } : undefined}
           >
-            <SectionHeader label={t('sections.spaces', 'Spaces')} count={projectListProps.filteredProjects.length} />
-            <ScrollArea className={scrollAreaClass}>
-              <SidebarProjectList {...projectListProps} />
-            </ScrollArea>
-          </section>
+            <CollapsibleTrigger
+              className="flex w-full flex-shrink-0 items-center gap-2 px-3 pb-1 pt-2 text-left transition-colors hover:bg-accent/40"
+              aria-label={t('sections.toggleSpaces', 'Toggle spaces')}
+            >
+              <ChevronRight
+                className={cn(
+                  'h-3 w-3 flex-shrink-0 text-muted-foreground/70 transition-transform duration-200',
+                  spacesExpanded && 'rotate-90',
+                )}
+              />
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                {t('sections.spaces', 'Spaces')}
+              </span>
+              {projectListProps.filteredProjects.length > 0 && (
+                <span className="text-[10px] font-normal text-muted-foreground/50">
+                  {projectListProps.filteredProjects.length}
+                </span>
+              )}
+            </CollapsibleTrigger>
+            <CollapsibleContent className="min-h-0 flex-1">
+              <ScrollArea className={spacesScrollAreaClass}>
+                <SidebarProjectList {...projectListProps} />
+              </ScrollArea>
+            </CollapsibleContent>
+          </Collapsible>
 
           <div className="nav-divider" />
 

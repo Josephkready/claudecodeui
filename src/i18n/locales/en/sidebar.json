@@ -120,7 +120,8 @@
   },
   "sections": {
     "spaces": "Spaces",
-    "conversations": "Conversations"
+    "conversations": "Conversations",
+    "toggleSpaces": "Toggle spaces"
   },
   "search": {
     "modeProjects": "Projects",

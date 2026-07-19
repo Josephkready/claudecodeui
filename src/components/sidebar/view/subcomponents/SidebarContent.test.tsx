@@ -64,6 +64,8 @@ function render(overrides: Partial<React.ComponentProps<typeof SidebarContent>> 
     archivedSessions: [],
     archivedSessionsCount: 0,
     isArchivedSessionsLoading: false,
+    spacesExpanded: false,
+    onSpacesExpandedChange: noop,
     searchFilter: '',
     onSearchFilterChange: noop,
     onClearSearchFilter: noop,
@@ -97,6 +99,23 @@ test('the default (none) overlay shows Spaces and Conversations at the same time
 
   assert.ok(markup.includes('Spaces'), 'expected the Spaces section header');
   assert.ok(markup.includes('Conversations'), 'expected the Conversations section header');
+});
+
+test('the Spaces section renders a collapse toggle and is collapsed by default', () => {
+  const markup = render({ sidebarOverlay: 'none', spacesExpanded: false });
+
+  assert.ok(markup.includes('Toggle spaces'), 'expected the Spaces collapse toggle affordance');
+  assert.ok(markup.includes('aria-expanded="false"'), 'expected the trigger to report collapsed');
+  assert.ok(markup.includes('data-state="closed"'), 'expected the Spaces region to render collapsed');
+  assert.ok(!markup.includes('data-state="open"'), 'the Spaces region should not be open by default');
+});
+
+test('the Spaces section expands when the persisted flag is set', () => {
+  const markup = render({ sidebarOverlay: 'none', spacesExpanded: true });
+
+  assert.ok(markup.includes('aria-expanded="true"'), 'expected the trigger to report expanded');
+  assert.ok(markup.includes('data-state="open"'), 'expected the Spaces region to render expanded');
+  assert.ok(!markup.includes('data-state="closed"'), 'the Spaces region should not be collapsed when expanded');
 });
 
 test('the archived overlay replaces the two sections', () => {
