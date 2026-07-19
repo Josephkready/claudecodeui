@@ -102,6 +102,8 @@ test('formatFileSize: clamps sizes beyond the largest unit to PB', () => {
 test('formatFileSize: clamps sub-1-byte fractional sizes into the B unit', () => {
   assert.equal(formatFileSize(0.5), '0.5 B');
   assert.ok(!formatFileSize(0.5).includes('undefined'));
+  assert.equal(formatFileSize(1), '1 B'); // boundary: rawIndex 0, no clamp needed
+  assert.equal(formatFileSize(0.99), '1 B'); // clamped B branch still trims a trailing .0
 });
 
 // Out-of-domain inputs (negative, NaN, Infinity) can't be salvaged by clamping
