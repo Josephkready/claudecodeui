@@ -38,7 +38,7 @@ function Sidebar({
   const { isPWA } = useDeviceSettings({ trackMobile: false });
   const { restartRequired, currentVersion } = useVersionCheck();
   const { preferences, setPreference } = useUiPreferences();
-  const { sidebarVisible } = preferences;
+  const { sidebarVisible, spacesExpanded } = preferences;
   const paletteOps = usePaletteOps();
 
   const {
@@ -215,6 +215,8 @@ function Sidebar({
             archivedSessions={archivedSessions}
             archivedSessionsCount={archivedSessionsCount}
             isArchivedSessionsLoading={isArchivedSessionsLoading}
+            spacesExpanded={spacesExpanded}
+            onSpacesExpandedChange={(open) => setPreference('spacesExpanded', open)}
             searchFilter={searchFilter}
             onSearchFilterChange={setSearchFilter}
             onClearSearchFilter={() => setSearchFilter('')}

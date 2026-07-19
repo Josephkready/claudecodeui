@@ -5,6 +5,9 @@ type UiPreferences = {
   showThinking: boolean;
   sendByCtrlEnter: boolean;
   sidebarVisible: boolean;
+  // Whether the sidebar's Spaces section is expanded. Defaults to collapsed so
+  // Conversations owns the vertical space until the user opens Spaces.
+  spacesExpanded: boolean;
   voiceEnabled: boolean;
 };
 
@@ -36,6 +39,7 @@ const DEFAULTS: UiPreferences = {
   showThinking: true,
   sendByCtrlEnter: false,
   sidebarVisible: true,
+  spacesExpanded: false,
   voiceEnabled: false,
 };
 
