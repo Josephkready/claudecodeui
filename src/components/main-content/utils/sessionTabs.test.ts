@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import type { SessionActivity, SessionActivityMap } from '../../../hooks/useSessionProtection';
 import type { SessionWithProvider } from '../../sidebar/types/types';
 
-import { buildSessionTabs, SESSION_TAB_STATUS_DOT } from './sessionTabs';
+import { buildSessionTabs, SESSION_TAB_STATUS_BORDER, SESSION_TAB_STATUS_DOT } from './sessionTabs';
 
 // Minimal SessionWithProvider factory — only the fields resolveStatus/tabs read.
 function mkSession(id: string, extra: Partial<SessionWithProvider> = {}): SessionWithProvider {
@@ -63,4 +63,13 @@ test('status-dot map: each status maps to its own distinct color, recent gets no
   assert.equal(SESSION_TAB_STATUS_DOT.running, 'bg-emerald-500');
   assert.equal(SESSION_TAB_STATUS_DOT.done, 'bg-sky-500');
   assert.equal(SESSION_TAB_STATUS_DOT.recent, null);
+});
+
+test('status-border map: outline color matches the dot color, recent is transparent', () => {
+  // The tab outline uses the same status palette as the dot; recent stays
+  // transparent so every pill keeps an equal border width (no layout shift).
+  assert.equal(SESSION_TAB_STATUS_BORDER.blocked, 'border-amber-500');
+  assert.equal(SESSION_TAB_STATUS_BORDER.running, 'border-emerald-500');
+  assert.equal(SESSION_TAB_STATUS_BORDER.done, 'border-sky-500');
+  assert.equal(SESSION_TAB_STATUS_BORDER.recent, 'border-transparent');
 });

@@ -8,7 +8,7 @@ import { PillBar, Pill, Tooltip } from '../../../../shared/view/ui';
 import { cn } from '../../../../lib/utils';
 import SessionProviderLogo from '../../../llm-logo-provider/SessionProviderLogo';
 import { getAllSessions, getSessionName } from '../../../sidebar/utils/utils';
-import { buildSessionTabs, SESSION_TAB_STATUS_DOT } from '../../utils/sessionTabs';
+import { buildSessionTabs, SESSION_TAB_STATUS_BORDER, SESSION_TAB_STATUS_DOT } from '../../utils/sessionTabs';
 
 type MainContentSessionTabsProps = {
   selectedProject: Project;
@@ -82,7 +82,7 @@ export default function MainContentSessionTabs({
                   key={id}
                   isActive={isActive}
                   onClick={() => onSessionSelect({ ...session, __projectId: selectedProject.projectId })}
-                  className="max-w-[180px]"
+                  className={cn('max-w-[180px] border', SESSION_TAB_STATUS_BORDER[status])}
                 >
                   <SessionProviderLogo provider={session.__provider} className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="truncate">{getSessionName(session, t)}</span>
