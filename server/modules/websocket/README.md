@@ -33,8 +33,9 @@ Benefits:
 |---|---|
 | `services/websocket-server.service.ts` | Creates `WebSocketServer`, binds `verifyClient`, routes connection by pathname |
 | `services/websocket-auth.service.ts` | Authenticates upgrade requests and attaches `request.user` |
-| `services/chat-websocket.service.ts` | Handles the `/ws` chat protocol (`chat.send` / `chat.abort` / `chat.subscribe` / `chat.permission-response`) |
-| `services/chat-run-registry.service.ts` | Tracks live provider runs per app session id: seq numbering, event replay buffer, provider-id mapping, completion state, per-session FIFO send queue + single-dispatcher handoff |
+| `services/chat-websocket.service.ts` | Handles the `/ws` chat protocol (`chat.send` / `chat.resume` / `chat.abort` / `chat.subscribe` / `chat.permission-response`) |
+| `services/chat-run-registry.service.ts` | Tracks live provider runs per app session id: seq numbering, event replay buffer, provider-id mapping, completion state, per-session FIFO send queue + single-dispatcher handoff, durable `active_runs` journal + graceful-drain primitives |
+| `services/chat-run-reconcile.service.ts` | Startup reconcile: flags `active_runs` rows left by a previous process as `interrupted` so stranded work is surfaced as resumable, never silently lost |
 | `services/chat-session-writer.service.ts` | Gateway writer handed to provider runtimes: remaps provider session ids to app ids, swallows `session_created`, assigns `seq` |
 | `services/shell-websocket.service.ts` | Handles `/shell` PTY lifecycle, reconnect buffering, auth URL detection |
 | `services/plugin-websocket-proxy.service.ts` | Bridges client socket to plugin socket |
@@ -129,7 +130,8 @@ flowchart TD
   B -->|invalid| C[send kind:protocol_error]
   B -->|ok| D{data.type}
 
-  D -->|chat.send| E[resolve session row -> submitMessage: start run, or queue FIFO, or reject QUEUE_FULL -> dispatcher drains queue -> spawnFns provider]
+  D -->|chat.send| E[resolve session row -> submitMessage: start run, or queue FIFO, or reject QUEUE_FULL, or refuse SERVER_DRAINING -> dispatcher drains queue -> spawnFns provider]
+  D -->|chat.resume| R[replay interrupted active_runs rows via submitMessage in arrival order -> chat_resumed ack + dispatcher drains]
   D -->|chat.abort| F[abortFns provider + synthetic complete]
   D -->|chat.subscribe| G[chat_subscribed ack + attach socket + replay events seq > lastSeq]
   D -->|chat.permission-response| H[resolveToolApproval]
@@ -138,10 +140,11 @@ flowchart TD
 
 ### Chat Notes
 
-1. **Unified envelope**: every server-to-client frame carries a `kind` — either a provider `NormalizedMessage` kind or a gateway kind (`chat_subscribed`, `session_upserted`, `loading_progress`, `protocol_error`). There is no second `type`-based protocol.
+1. **Unified envelope**: every server-to-client frame carries a `kind` — either a provider `NormalizedMessage` kind or a gateway kind (`chat_subscribed`, `chat_resumed`, `session_upserted`, `loading_progress`, `protocol_error`). There is no second `type`-based protocol.
 2. **Unified terminal lifecycle**: every provider run ends with exactly one `complete` message built by `createCompleteMessage()` (`server/shared/utils.ts`): `{ kind: "complete", sessionId, actualSessionId, exitCode, success, aborted }`. The chat handler emits a synthetic `complete` for runs that crash or get aborted, and the run registry drops duplicate completes.
 3. **Per-run event log**: every live event gets a monotonically increasing `seq`. `chat.subscribe { sessions: [{ sessionId, lastSeq }] }` re-attaches the live stream to the requesting socket (any provider, not just Claude) and replays events with `seq > lastSeq`. If the buffer no longer covers `lastSeq`, the client refreshes over REST.
-4. `chat_subscribed` includes `isProcessing` (replaces `check-session-status`) and `pendingPermissions` (replaces `get-pending-permissions`).
+4. `chat_subscribed` includes `isProcessing` (replaces `check-session-status`), `pendingPermissions` (replaces `get-pending-permissions`), and `interrupted` (true when a previous process left in-flight/queued work for this session that a `chat.resume` can re-dispatch).
+5. **Restart persistence + resume** (`active_runs` table, issue #70): the in-memory run registry is mirrored to a durable SQLite journal — one row per accepted `chat.send` (`running`/`queued`), deleted at the single completion choke point so a clean run leaves no trace. On SIGTERM/SIGINT the server enters a bounded graceful drain (`CHAT_DRAIN_TIMEOUT_MS`, default 10s): new sends are refused with a `SERVER_DRAINING` `protocol_error` while in-flight runs finish. Anything still journaled after a restart is flagged `interrupted` by the startup reconcile and surfaced via `chat_subscribed.interrupted`; `chat.resume { sessionId }` re-dispatches those messages, in arrival order (the head resuming the provider transcript by provider-native id, the rest queueing behind it), and acks with `chat_resumed { sessionId, resumed }`. Net: no in-flight or queued message is silently lost across a restart.
 
 ## `/shell` Terminal Flow
 

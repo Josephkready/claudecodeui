@@ -1,6 +1,7 @@
 import path from 'node:path';
 
-import { projectsDb, sessionsDb } from '@/modules/database/index.js';
+import { activeRunsDb, projectsDb, sessionsDb } from '@/modules/database/index.js';
+import type { PersistRunInput } from '@/modules/database/index.js';
 import { generateDisplayName } from '@/modules/projects/index.js';
 import { ChatSessionWriter } from '@/modules/websocket/services/chat-session-writer.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
@@ -54,6 +55,15 @@ export type ChatRun = {
    * resolved, wrongly dropping the run back to "running" while still waiting.
    */
   pendingApprovalCount: number;
+  /**
+   * Row id of this run's durable `active_runs` journal record (issue #70), or
+   * `undefined` for runs created through the test-only `startRun`/`startDispatchedRun`
+   * primitives without a persisted message. The registry updates that row's
+   * provider id mid-run and deletes it on completion so a clean lifecycle never
+   * leaves an interrupted ghost; a restart before completion leaves the row for
+   * the startup reconcile to surface as resumable.
+   */
+  persistId?: number;
 };
 
 /**
@@ -95,6 +105,13 @@ export type QueuedChatMessage = {
   connection: RealtimeClientConnection;
   userId: string | number | null;
   enqueuedAt: number;
+  /**
+   * Row id of this message's durable `active_runs` journal record (issue #70),
+   * set once it has been persisted as `queued`. The dispatcher promotes that row
+   * to `running` when the message leaves the queue, so a restart mid-queue never
+   * loses it. `undefined` for messages built by tests that bypass persistence.
+   */
+  persistId?: number;
 };
 
 /** Inputs needed to create (and register) a run for a session. */
@@ -129,6 +146,16 @@ const pendingQueues = new Map<string, QueuedChatMessage[]>();
  * race where two devices both flush the instant a turn ends.
  */
 const dispatchingSessions = new Set<string>();
+
+/**
+ * Set once by `beginDrain()` on SIGTERM/SIGINT: the server is shutting down and
+ * must stop accepting new runs while it lets in-flight runs finish (issue #70).
+ * While draining, `submitMessage` reports `draining` so the caller surfaces a
+ * *visible* "retry" error rather than starting a run the imminent exit would
+ * guillotine mid-stream. Module-level (not per-session) because a drain applies
+ * to the whole process.
+ */
+let draining = false;
 
 async function broadcastCanonicalSessionUpsert(appSessionId: string): Promise<void> {
   const row = sessionsDb.getSessionById(appSessionId);
@@ -223,6 +250,23 @@ function decorateAndRecordEvent(run: ChatRun, message: NormalizedMessage): Norma
     run.completedAt = Date.now();
     evictRunLater(run.appSessionId);
 
+    // Single completion choke point (natural end, abort, and synthetic
+    // safety-net all funnel through here): drop the durable journal record so a
+    // cleanly-finished run never lingers to be surfaced as interrupted after a
+    // later restart (issue #70).
+    if (run.persistId != null) {
+      try {
+        activeRunsDb.remove(run.persistId);
+        run.persistId = undefined;
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+        console.error('[ChatRunRegistry] Failed to clear active_runs journal on completion', {
+          appSessionId: run.appSessionId,
+          error: messageText,
+        });
+      }
+    }
+
     // Persist the finish time so the sidebar can show a durable "Done"
     // (finished-but-unviewed) state that survives reload/eviction, then
     // broadcast the updated row so clients reflect Done live rather than only
@@ -270,6 +314,21 @@ function recordProviderSessionId(run: ChatRun, providerSessionId: string): void 
 
   run.providerSessionId = providerSessionId;
 
+  // Keep the durable journal addressable by the provider-native id so a
+  // post-restart resume can continue the provider transcript (issue #70).
+  if (run.persistId != null) {
+    try {
+      activeRunsDb.setProviderSessionId(run.persistId, providerSessionId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[ChatRunRegistry] Failed to persist provider id to active_runs journal', {
+        appSessionId: run.appSessionId,
+        providerSessionId,
+        error: message,
+      });
+    }
+  }
+
   try {
     sessionsDb.assignProviderSessionId(run.appSessionId, providerSessionId);
     void broadcastCanonicalSessionUpsert(run.appSessionId).catch((error) => {
@@ -310,6 +369,47 @@ function setRunBlocked(run: ChatRun, blocked: boolean): void {
   run.pendingApprovalCount = Math.max(0, run.pendingApprovalCount - 1);
   if (run.pendingApprovalCount === 0) {
     run.awaitingInputSince = null;
+  }
+}
+
+function logPersistFailure(what: string, appSessionId: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`[ChatRunRegistry] Failed to ${what} in active_runs journal`, { appSessionId, error: message });
+}
+
+function toPersistInput(input: StartRunInput, message: QueuedChatMessage): PersistRunInput {
+  return {
+    sessionId: input.appSessionId,
+    provider: input.provider,
+    providerSessionId: input.providerSessionId,
+    content: message.content,
+    options: message.options,
+    userId: message.userId,
+    enqueuedAt: message.enqueuedAt,
+  };
+}
+
+/**
+ * Best-effort durability wrappers for the `active_runs` journal (issue #70). A
+ * DB write failure must never break the live send path — the in-memory registry
+ * still drives the run; only its post-restart resumability is lost. So these
+ * log and return `undefined` instead of throwing.
+ */
+function persistRunning(input: StartRunInput, message: QueuedChatMessage): number | undefined {
+  try {
+    return activeRunsDb.recordRunning(toPersistInput(input, message));
+  } catch (error) {
+    logPersistFailure('record running run', input.appSessionId, error);
+    return undefined;
+  }
+}
+
+function persistQueued(input: StartRunInput, message: QueuedChatMessage): number | undefined {
+  try {
+    return activeRunsDb.recordQueued(toPersistInput(input, message));
+  } catch (error) {
+    logPersistFailure('record queued message', input.appSessionId, error);
+    return undefined;
   }
 }
 
@@ -399,8 +499,18 @@ export const chatRunRegistry = {
   ):
     | { action: 'start'; run: ChatRun }
     | { action: 'queued'; queueLength: number }
-    | { action: 'rejected' } {
+    | { action: 'rejected' }
+    | { action: 'draining' } {
     const sessionId = input.appSessionId;
+
+    // Shutting down: refuse new work rather than starting/queueing a run the
+    // imminent process exit would guillotine mid-stream. The caller surfaces a
+    // visible "server restarting, retry" error so the message is never silently
+    // lost (issue #70).
+    if (draining) {
+      return { action: 'draining' };
+    }
+
     const runInProgress = runs.get(sessionId)?.status === 'running';
 
     if (runInProgress || dispatchingSessions.has(sessionId)) {
@@ -408,6 +518,7 @@ export const chatRunRegistry = {
       if (queue.length >= MAX_PENDING_MESSAGES_PER_SESSION) {
         return { action: 'rejected' };
       }
+      message.persistId = persistQueued(input, message);
       queue.push(message);
       pendingQueues.set(sessionId, queue);
       return { action: 'queued', queueLength: queue.length };
@@ -415,6 +526,7 @@ export const chatRunRegistry = {
 
     dispatchingSessions.add(sessionId);
     const run = createAndRegisterRun(input);
+    run.persistId = persistRunning(input, message);
     return { action: 'start', run };
   },
 
@@ -444,9 +556,23 @@ export const chatRunRegistry = {
    * Creates the run for a message just dequeued by the active dispatcher. No
    * arbitration is needed: the dispatcher role is already held and the previous
    * run has completed, so this is unambiguously the session's next run.
+   *
+   * The dequeued message already owns a durable `queued` journal row; promote it
+   * in place to `running` (carrying the provider id resolved by the previous
+   * run) rather than inserting a new record, so its journal identity — and thus
+   * its resumability — survives the queue-to-run handoff (issue #70).
    */
-  startDispatchedRun(input: StartRunInput): ChatRun {
-    return createAndRegisterRun(input);
+  startDispatchedRun(input: StartRunInput, message: QueuedChatMessage): ChatRun {
+    const run = createAndRegisterRun(input);
+    if (message.persistId != null) {
+      run.persistId = message.persistId;
+      try {
+        activeRunsDb.promoteToRunning(message.persistId, input.providerSessionId);
+      } catch (error) {
+        logPersistFailure('promote queued message to running', input.appSessionId, error);
+      }
+    }
+    return run;
   },
 
   /**
@@ -462,6 +588,15 @@ export const chatRunRegistry = {
     const discarded = pendingQueues.get(appSessionId)?.length ?? 0;
     pendingQueues.delete(appSessionId);
     dispatchingSessions.delete(appSessionId);
+    // Discard the durable journal rows for this session too, so a forced release
+    // (error mid-drain, or a session deleted out from under its queue) doesn't
+    // leave orphaned records the startup reconcile would resurrect as
+    // interrupted (issue #70).
+    try {
+      activeRunsDb.removeBySession(appSessionId);
+    } catch (error) {
+      logPersistFailure('clear discarded journal rows', appSessionId, error);
+    }
     return discarded;
   },
 
@@ -568,12 +703,69 @@ export const chatRunRegistry = {
     run.writer.sendComplete(opts);
   },
 
+  /** Whether the server has entered shutdown drain (issue #70). */
+  isDraining(): boolean {
+    return draining;
+  },
+
   /**
-   * Test-only escape hatch: clears every tracked run and queued message.
+   * Enters shutdown-drain mode on SIGTERM/SIGINT: stop accepting new runs so
+   * in-flight runs can finish before the process exits. Idempotent.
+   */
+  beginDrain(): void {
+    draining = true;
+  },
+
+  /** Number of runs currently streaming (status `running`). */
+  countRunningRuns(): number {
+    let count = 0;
+    for (const run of runs.values()) {
+      if (run.status === 'running') {
+        count += 1;
+      }
+    }
+    return count;
+  },
+
+  /**
+   * Resolves once no run is streaming, or after `timeoutMs` — the bounded
+   * graceful-drain wait the shutdown handler awaits before exiting. Polls the
+   * run map rather than hooking each run's completion so it stays decoupled from
+   * the writer path and safe to call from a signal handler. Returns whether the
+   * drain fully completed and how many runs were still live at the deadline
+   * (those survive as interrupted+resumable via the journal after the restart).
+   */
+  async waitForActiveRuns(
+    timeoutMs: number,
+    pollMs = 100,
+  ): Promise<{ drained: boolean; remaining: number }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const remaining = this.countRunningRuns();
+      if (remaining === 0) {
+        return { drained: true, remaining: 0 };
+      }
+      const timeLeft = deadline - Date.now();
+      if (timeLeft <= 0) {
+        return { drained: false, remaining };
+      }
+      // Deliberately NOT unref'd: the shutdown handler awaits this wait, so the
+      // poll timer must keep the event loop alive until the drain resolves —
+      // otherwise the process could exit before in-flight runs get their window.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, Math.min(pollMs, timeLeft));
+      });
+    }
+  },
+
+  /**
+   * Test-only escape hatch: clears every tracked run and queued message, and
+   * resets the drain flag so a drain test cannot leak into later suites.
    */
   clearAll(): void {
     runs.clear();
     pendingQueues.clear();
     dispatchingSessions.clear();
+    draining = false;
   },
 };

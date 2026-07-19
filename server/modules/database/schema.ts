@@ -113,6 +113,41 @@ CREATE TABLE IF NOT EXISTS scan_state (
 );
 `;
 
+/**
+ * Durable journal of chat runs that were in-flight or queued, so a server
+ * restart (crash, manual restart, or a dante-sync/ansible-pull reconcile) never
+ * silently drops the user's work. The in-memory run registry is the fast path;
+ * this table mirrors it so the startup reconcile can surface interrupted work as
+ * resumable instead of losing it (issue #70).
+ *
+ * One row per accepted chat.send message:
+ * - status 'running'     — the message whose provider run was live.
+ * - status 'queued'      — a message waiting in the session's FIFO queue.
+ * - status 'interrupted' — set by the startup reconcile for any 'running' or
+ *   'queued' row left behind by a previous process; the user resumes these.
+ *
+ * Rows are deleted when a run completes normally (natural end, abort, or the
+ * synthetic safety-net complete) or when a queue is discarded, so a clean
+ * lifecycle never leaves an 'interrupted' ghost behind. The FK cascade cleans
+ * a session's rows when the session row itself is deleted.
+ */
+export const ACTIVE_RUNS_TABLE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS active_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_session_id TEXT,
+    content TEXT NOT NULL,
+    options_json TEXT NOT NULL DEFAULT '{}',
+    user_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    enqueued_at INTEGER NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+    ON DELETE CASCADE
+);
+`;
+
 export const APP_CONFIG_TABLE_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_config (
     key TEXT PRIMARY KEY,
@@ -158,6 +193,10 @@ CREATE INDEX IF NOT EXISTS idx_session_ids_lookup ON sessions(session_id);
 -- Creating it here can fail on upgraded installs where the legacy sessions table has no project_path.
 
 ${LAST_SCANNED_AT_SQL}
+
+${ACTIVE_RUNS_TABLE_SCHEMA_SQL}
+CREATE INDEX IF NOT EXISTS idx_active_runs_session ON active_runs(session_id);
+CREATE INDEX IF NOT EXISTS idx_active_runs_status ON active_runs(status);
 
 ${APP_CONFIG_TABLE_SCHEMA_SQL}
 `;

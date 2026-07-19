@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { WebSocket } from 'ws';
 
-import { sessionsDb } from '@/modules/database/index.js';
+import { activeRunsDb, sessionsDb } from '@/modules/database/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import type { ChatRun, QueuedChatMessage } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
@@ -246,13 +246,16 @@ async function driveRunAndDrain(
         return;
       }
 
-      run = chatRunRegistry.startDispatchedRun({
-        appSessionId: sessionId,
-        provider: session.provider as LLMProvider,
-        providerSessionId: session.provider_session_id,
-        connection: next.connection,
-        userId: next.userId,
-      });
+      run = chatRunRegistry.startDispatchedRun(
+        {
+          appSessionId: sessionId,
+          provider: session.provider as LLMProvider,
+          providerSessionId: session.provider_session_id,
+          connection: next.connection,
+          userId: next.userId,
+        },
+        next,
+      );
       message = next;
     }
   } catch (error) {
@@ -327,6 +330,22 @@ async function handleChatSend(
     message,
   );
 
+  if (result.action === 'draining') {
+    // The server has begun its shutdown drain: new runs are refused so an
+    // imminent restart cannot guillotine this turn mid-stream. Surfaced visibly
+    // (never a silent drop) so the client keeps the message and can retry once
+    // the server is back (issue #70). Logged server-side too, mirroring the
+    // queue-full branch below, so a drain refusal is observable during a deploy.
+    console.warn('[Chat] Refusing send during shutdown drain', { sessionId });
+    sendProtocolError(
+      ws,
+      'SERVER_DRAINING',
+      'The server is restarting; your message was not sent. Please retry in a moment.',
+      sessionId
+    );
+    return;
+  }
+
   if (result.action === 'rejected') {
     // Only reached under a pathological backlog (a stuck run or a flooding
     // client). Surfaced visibly (never a silent drop) so the client can keep
@@ -355,6 +374,148 @@ async function handleChatSend(
   // result.action === 'start': this task owns the session's dispatcher. Drive
   // the head run to completion, then drain anything that queued while it ran.
   await driveRunAndDrain(sessionId, result.run, message, dependencies);
+}
+
+/**
+ * Parses a persisted `options_json` blob back into a chat.send options object,
+ * tolerating corruption by falling back to empty options rather than throwing on
+ * the resume path.
+ */
+function parsePersistedOptions(optionsJson: string): AnyRecord {
+  try {
+    const parsed = JSON.parse(optionsJson);
+    return parsed && typeof parsed === 'object' ? (parsed as AnyRecord) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Handles `chat.resume`: re-dispatches the messages a previous server lifecycle
+ * left interrupted for a session (issue #70). The startup reconcile flags any
+ * in-flight/queued rows as `interrupted`; this replays them, in their original
+ * arrival order, through the normal submit path — the first starts a run
+ * (resuming the provider transcript by provider-native id) and the rest queue
+ * behind it. If a run is already live for the session (the user resumed after
+ * already sending something new), every replayed message simply queues.
+ *
+ * Each interrupted row's marker is dropped only once its message has been
+ * re-recorded as a live journal row, so a resume that is itself cut short (queue
+ * full, or a second restart mid-resume) still leaves the not-yet-replayed
+ * messages resumable — never silently lost.
+ */
+async function handleChatResume(
+  ws: WebSocket,
+  userId: string | number | null,
+  data: AnyRecord,
+  dependencies: ChatWebSocketDependencies
+): Promise<void> {
+  const sessionId = readRequiredSessionId(data);
+  if (!sessionId) {
+    sendProtocolError(ws, 'SESSION_ID_REQUIRED', 'chat.resume requires a sessionId.');
+    return;
+  }
+
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) {
+    sendProtocolError(ws, 'SESSION_NOT_FOUND', `Session "${sessionId}" was not found.`, sessionId);
+    return;
+  }
+
+  const provider = session.provider as LLMProvider;
+  const spawnFn = dependencies.spawnFns[provider];
+  if (!spawnFn) {
+    sendProtocolError(ws, 'UNSUPPORTED_PROVIDER', `Provider "${provider}" is not available.`, sessionId);
+    return;
+  }
+
+  const pending = activeRunsDb.getInterrupted(sessionId);
+  if (pending.length === 0) {
+    // Nothing to resume (already resumed elsewhere, or the run completed). Ack so
+    // the client can clear its interrupted affordance without guessing.
+    sendJson(ws, { kind: 'chat_resumed', sessionId, resumed: 0, timestamp: new Date().toISOString() });
+    return;
+  }
+
+  let startedRun: ChatRun | null = null;
+  let startedMessage: QueuedChatMessage | null = null;
+  let resumed = 0;
+
+  for (const row of pending) {
+    const message: QueuedChatMessage = {
+      content: row.content,
+      options: parsePersistedOptions(row.options_json),
+      connection: ws,
+      userId,
+      enqueuedAt: Date.now(),
+    };
+
+    const result = chatRunRegistry.submitMessage(
+      {
+        appSessionId: sessionId,
+        provider,
+        providerSessionId: session.provider_session_id,
+        connection: ws,
+        userId,
+      },
+      message,
+    );
+
+    if (result.action === 'draining') {
+      // Server is shutting down again mid-resume: stop, leaving the remaining
+      // interrupted markers in place so they stay resumable after the restart.
+      console.warn('[Chat] Refusing resume during shutdown drain', { sessionId });
+      sendProtocolError(
+        ws,
+        'SERVER_DRAINING',
+        'The server is restarting; resume was not started. Please retry in a moment.',
+        sessionId
+      );
+      return;
+    }
+
+    if (result.action === 'rejected') {
+      // Queue at capacity: stop here, leaving this and the remaining interrupted
+      // markers untouched so nothing is lost — the user can resume the rest once
+      // the backlog drains.
+      sendProtocolError(
+        ws,
+        'QUEUE_FULL',
+        `Session "${sessionId}" has too many queued messages; wait for it to catch up.`,
+        sessionId
+      );
+      break;
+    }
+
+    // start or queued: the message now owns a fresh live journal row (inserted
+    // by submitMessage), so retire the old interrupted marker. Order matters —
+    // the new row is written BEFORE this delete, so a hard kill in between leaves
+    // a harmless duplicate (re-surfaced on the next reconcile) rather than losing
+    // the message. Best-effort: a DB failure here must NOT abort the resume,
+    // which has already registered/queued the live run — throwing would skip the
+    // trailing driveRunAndDrain and wedge the session (running forever, its queue
+    // never drained). The new row carries the work forward regardless.
+    try {
+      activeRunsDb.remove(row.id);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error);
+      console.error('[Chat] Failed to retire interrupted marker on resume', { sessionId, error: messageText });
+    }
+    resumed += 1;
+    if (result.action === 'start') {
+      startedRun = result.run;
+      startedMessage = message;
+    }
+  }
+
+  sendJson(ws, { kind: 'chat_resumed', sessionId, resumed, timestamp: new Date().toISOString() });
+
+  // Only a resume that started the head run owns the dispatcher and must drive
+  // the drain; if a run was already live, its existing dispatcher picks up
+  // everything that just queued.
+  if (startedRun && startedMessage) {
+    await driveRunAndDrain(sessionId, startedRun, startedMessage, dependencies);
+  }
 }
 
 /**
@@ -447,6 +608,10 @@ function handleChatSubscribe(
       kind: 'chat_subscribed',
       sessionId,
       isProcessing,
+      // Surfaces a session whose in-flight/queued work was stranded by a server
+      // restart so the client can offer a one-click resume instead of showing it
+      // as silently idle/Done (issue #70). A live run is never interrupted.
+      interrupted: !isProcessing && activeRunsDb.hasInterrupted(sessionId),
       lastSeq: run?.lastSeq ?? 0,
       pendingPermissions,
       timestamp: new Date().toISOString(),
@@ -487,6 +652,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  *
  * Inbound protocol (client to server):
  * - `chat.send`                { sessionId, content, options? }
+ * - `chat.resume`             { sessionId }  (re-dispatch restart-interrupted work)
  * - `chat.abort`               { sessionId }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
@@ -524,6 +690,9 @@ export function handleChatConnection(
       switch (messageType) {
         case 'chat.send':
           await handleChatSend(ws, userId, data, dependencies);
+          return;
+        case 'chat.resume':
+          await handleChatResume(ws, userId, data, dependencies);
           return;
         case 'chat.abort':
           await handleChatAbort(ws, data, dependencies);

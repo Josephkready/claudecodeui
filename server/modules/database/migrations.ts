@@ -1,6 +1,7 @@
 import { Database } from 'better-sqlite3';
 
 import {
+  ACTIVE_RUNS_TABLE_SCHEMA_SQL,
   APP_CONFIG_TABLE_SCHEMA_SQL,
   LAST_SCANNED_AT_SQL,
   PROJECTS_TABLE_SCHEMA_SQL,
@@ -497,6 +498,13 @@ export const runMigrations = (db: Database) => {
     }
 
     db.exec(LAST_SCANNED_AT_SQL);
+
+    // Durable in-flight/queued chat run journal (issue #70). Created here (not
+    // only in INIT_SCHEMA_SQL) so upgraded installs pick it up on the next boot.
+    db.exec(ACTIVE_RUNS_TABLE_SCHEMA_SQL);
+    db.exec('CREATE INDEX IF NOT EXISTS idx_active_runs_session ON active_runs(session_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_active_runs_status ON active_runs(status)');
+
     console.log('Database migrations completed successfully');
   } catch (error: any) {
     console.error('Error running migrations:', error.message);
