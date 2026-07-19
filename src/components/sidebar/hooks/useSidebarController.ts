@@ -10,7 +10,7 @@ import type {
   ArchivedSessionListItem,
   DeleteProjectConfirmation,
   ProjectSortOrder,
-  SidebarSearchMode,
+  SidebarOverlay,
   SessionDeleteConfirmation,
   SessionWithProvider,
 } from '../types/types';
@@ -22,7 +22,6 @@ import {
   readProjectSortOrder,
   sortProjects,
 } from '../utils/utils';
-import { buildBulkArchivePrompt, type BulkArchivePrompt } from '../utils/bulkArchivePrompt';
 
 type SnippetHighlight = {
   start: number;
@@ -130,15 +129,10 @@ export function useSidebarController({
   const [deletingProjects, setDeletingProjects] = useState<Set<string>>(new Set());
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteProjectConfirmation | null>(null);
   const [sessionDeleteConfirmation, setSessionDeleteConfirmation] = useState<SessionDeleteConfirmation | null>(null);
-  // The active bulk archive-by-age dialog (the previewed prompt + the age it
-  // applies to), or null when closed. Replaces the blocking window.confirm.
-  const [bulkArchiveByAgePrompt, setBulkArchiveByAgePrompt] =
-    useState<{ prompt: BulkArchivePrompt; olderThanDays: number } | null>(null);
-  // Monotonic id for the async archivable-count preview. Bumped on every new
-  // request and on dismissal, so a slow/superseded preview can't resurrect a
-  // stale dialog after the user moved on (the old blocking confirm couldn't race).
-  const bulkArchivePreviewIdRef = useRef(0);
-  const [searchMode, setSearchMode] = useState<SidebarSearchMode>('conversations');
+  // Which overlay (if any) is layered over the two-section body. `'none'` shows
+  // Spaces + Conversations together; `'search'` runs full-text conversation
+  // search; `'archived'` browses the archive. The old 3-way view toggle is gone.
+  const [sidebarOverlay, setSidebarOverlay] = useState<SidebarOverlay>('none');
   const [conversationResults, setConversationResults] = useState<ConversationSearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
   const [searchProgress, setSearchProgress] = useState<SearchProgress | null>(null);
@@ -297,14 +291,14 @@ export function useSidebarController({
   }, [fetchArchivedSessions]);
 
   useEffect(() => {
-    if (searchMode !== 'archived') {
+    if (sidebarOverlay !== 'archived') {
       return;
     }
 
-    // Refresh archive contents when the archived tab opens so restore actions
+    // Refresh archive contents when the archived overlay opens so restore actions
     // and background synchronizer updates are reflected without a full reload.
     void fetchArchivedSessions();
-  }, [fetchArchivedSessions, searchMode]);
+  }, [fetchArchivedSessions, sidebarOverlay]);
 
   useEffect(() => {
     setOptimisticStarByProjectId((previous) => {
@@ -353,7 +347,7 @@ export function useSidebarController({
     }
 
     const query = debouncedSearchQuery;
-    if (searchMode !== 'conversations' || query.length < 2) {
+    if (sidebarOverlay !== 'search' || query.length < 2) {
       searchSeqRef.current += 1;
       setConversationResults(null);
       setSearchProgress(null);
@@ -432,7 +426,7 @@ export function useSidebarController({
         eventSourceRef.current = null;
       }
     };
-  }, [debouncedSearchQuery, searchMode]);
+  }, [debouncedSearchQuery, sidebarOverlay]);
 
   // All sidebar state keys (expanded, starred, loading, etc.) use the DB
   // `projectId` as their identifier after the migration.
@@ -894,87 +888,6 @@ export function useSidebarController({
     }
   }, [fetchArchivedSessions, onRefresh]);
 
-  // Bulk declutter, step 1 (request): preview how many conversations qualify,
-  // then open the in-app confirmation dialog. Archiving is reversible from the
-  // archived view, so we confirm once before it runs — and name the count so the
-  // user knows whether they're about to archive 2 or 200. The blocking
-  // window.confirm/alert this used to call are replaced by `bulkArchiveByAgePrompt`
-  // state rendered as an inline Confirmation banner; the actual archive runs in
-  // `confirmBulkArchiveByAge`.
-  const bulkArchiveSessionsByAge = useCallback(async (olderThanDays: number) => {
-    const requestId = bulkArchivePreviewIdRef.current + 1;
-    bulkArchivePreviewIdRef.current = requestId;
-    // Preview the affected count. Best-effort: on failure `archivableCount` stays
-    // null and the prompt falls back to the generic (count-less) confirmation
-    // rather than blocking the action.
-    let archivableCount: number | null = null;
-    try {
-      const countResponse = await api.getArchivableSessionCountByAge(olderThanDays);
-      if (countResponse.ok) {
-        const payload = (await countResponse.json()) as { data?: { archivableCount?: number } };
-        const count = payload.data?.archivableCount;
-        if (typeof count === 'number' && Number.isFinite(count)) {
-          archivableCount = count;
-        }
-      } else {
-        console.error('[Sidebar] Failed to preview archivable session count:', countResponse.status);
-      }
-    } catch (error) {
-      console.error('[Sidebar] Failed to preview archivable session count:', error);
-    }
-
-    // A newer request started (or the dialog was dismissed) while this preview
-    // was in flight — drop this now-stale result instead of reopening the dialog.
-    if (requestId !== bulkArchivePreviewIdRef.current) {
-      return;
-    }
-
-    // Both kinds open the dialog: `confirm` asks before archiving, `inform`
-    // (nothing qualifies) shows an OK-only notice instead of running a no-op.
-    const prompt = buildBulkArchivePrompt(archivableCount, olderThanDays, t);
-    setBulkArchiveByAgePrompt({ prompt, olderThanDays });
-  }, [t]);
-
-  // Dismiss the dialog without archiving (Cancel, or the OK on an `inform`).
-  // Bumping the preview id discards any still-in-flight preview so it can't pop
-  // the dialog back open after the user dismissed it.
-  const cancelBulkArchiveByAge = useCallback(() => {
-    bulkArchivePreviewIdRef.current += 1;
-    setBulkArchiveByAgePrompt(null);
-  }, []);
-
-  // Bulk declutter, step 2 (confirm): run the archive for the age captured when
-  // the dialog opened, then refresh both the active lists and the archived view
-  // so the moved rows land in their new home. Only a `confirm` prompt archives;
-  // an `inform` dialog has nothing to run.
-  const confirmBulkArchiveByAge = useCallback(async () => {
-    bulkArchivePreviewIdRef.current += 1;
-    const active = bulkArchiveByAgePrompt;
-    setBulkArchiveByAgePrompt(null);
-    if (!active || active.prompt.kind !== 'confirm') {
-      return;
-    }
-
-    try {
-      const response = await api.bulkArchiveSessionsByAge(active.olderThanDays);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[Sidebar] Failed to bulk-archive sessions by age:', {
-          status: response.status,
-          error: errorText,
-        });
-        alert(t('messages.archiveSessionFailed', 'Failed to archive session. Please try again.'));
-        return;
-      }
-
-      await refreshProjects();
-    } catch (error) {
-      console.error('[Sidebar] Error bulk-archiving sessions by age:', error);
-      alert(t('messages.archiveSessionError', 'Error archiving session. Please try again.'));
-    }
-  }, [bulkArchiveByAgePrompt, refreshProjects, t]);
-
   const updateSessionSummary = useCallback(
     // `_projectId` and `_provider` are preserved for compatibility with
     // existing sidebar callback signatures; backend rename only needs sessionId.
@@ -1005,10 +918,6 @@ export function useSidebarController({
   );
 
   const collapseSidebar = useCallback(() => {
-    // Collapsing hides the sidebar (and the inline dialog); dismiss any open
-    // bulk-archive prompt so it doesn't silently reappear on re-expand.
-    bulkArchivePreviewIdRef.current += 1;
-    setBulkArchiveByAgePrompt(null);
     setSidebarVisible(false);
   }, [setSidebarVisible]);
 
@@ -1058,10 +967,6 @@ export function useSidebarController({
     restoreArchivedProject,
     restoreArchivedSession,
     refreshProjects,
-    bulkArchiveSessionsByAge,
-    bulkArchiveByAgePrompt,
-    confirmBulkArchiveByAge,
-    cancelBulkArchiveByAge,
     updateSessionSummary,
     collapseSidebar,
     expandSidebar,
@@ -1069,8 +974,8 @@ export function useSidebarController({
     setEditingName,
     setEditingSession,
     setEditingSessionName,
-    searchMode,
-    setSearchMode,
+    sidebarOverlay,
+    setSidebarOverlay,
     conversationResults,
     isSearching,
     searchProgress,

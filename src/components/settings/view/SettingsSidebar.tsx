@@ -1,4 +1,4 @@
-import { Bell, Bot, GitBranch, Info, Key, Mic, Palette } from 'lucide-react';
+import { Bell, Bot, Database, GitBranch, Info, Key, Mic, Palette } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { cn } from '../../../lib/utils';
@@ -13,6 +13,9 @@ type SettingsSidebarProps = {
 type NavItem = {
   id: SettingsMainTab;
   labelKey: string;
+  // English fallback so a tab whose key isn't in the locale files yet still
+  // renders a real label instead of the raw key.
+  labelFallback?: string;
   icon: typeof Bot;
 };
 
@@ -23,6 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'api', labelKey: 'mainTabs.apiTokens', icon: Key },
   { id: 'voice', labelKey: 'mainTabs.voice', icon: Mic },
   { id: 'notifications', labelKey: 'mainTabs.notifications', icon: Bell },
+  { id: 'data', labelKey: 'mainTabs.data', labelFallback: 'Data', icon: Database },
   { id: 'about', labelKey: 'mainTabs.about', icon: Info },
 ];
 
@@ -50,7 +54,7 @@ export default function SettingsSidebar({ activeTab, onChange }: SettingsSidebar
                 )}
               >
                 <Icon className="h-4 w-4 flex-shrink-0" />
-                {t(item.labelKey)}
+                {t(item.labelKey, item.labelFallback ?? item.labelKey)}
               </button>
             );
           })}
@@ -71,7 +75,7 @@ export default function SettingsSidebar({ activeTab, onChange }: SettingsSidebar
                 className="flex-shrink-0"
               >
                 <Icon className="h-3.5 w-3.5" />
-                {t(item.labelKey)}
+                {t(item.labelKey, item.labelFallback ?? item.labelKey)}
               </Pill>
             );
           })}

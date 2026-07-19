@@ -10,7 +10,6 @@ import type { LLMProvider } from '../../../types/app';
 import type { SidebarProps } from '../types/types';
 
 import SidebarCollapsed from './subcomponents/SidebarCollapsed';
-import BulkArchiveConfirmation from './subcomponents/BulkArchiveConfirmation';
 import SidebarContent from './subcomponents/SidebarContent';
 import SidebarModals from './subcomponents/SidebarModals';
 import type { SidebarProjectListProps } from './subcomponents/SidebarProjectList';
@@ -54,12 +53,11 @@ function Sidebar({
     editingSession,
     editingSessionName,
     searchFilter,
-    searchMode,
-    setSearchMode,
+    sidebarOverlay,
+    setSidebarOverlay,
     conversationResults,
     isSearching,
     searchProgress,
-    clearConversationResults,
     runningSessionsCount,
     deletingProjects,
     deleteConfirmation,
@@ -89,10 +87,6 @@ function Sidebar({
     restoreArchivedProject,
     restoreArchivedSession,
     refreshProjects,
-    bulkArchiveSessionsByAge,
-    bulkArchiveByAgePrompt,
-    confirmBulkArchiveByAge,
-    cancelBulkArchiveByAge,
     updateSessionSummary,
     collapseSidebar: handleCollapseSidebar,
     expandSidebar: handleExpandSidebar,
@@ -211,14 +205,6 @@ function Sidebar({
         />
       ) : (
         <>
-          <BulkArchiveConfirmation
-            prompt={bulkArchiveByAgePrompt?.prompt ?? null}
-            onConfirm={() => {
-              void confirmBulkArchiveByAge();
-            }}
-            onCancel={cancelBulkArchiveByAge}
-            t={t}
-          />
           <SidebarContent
             isPWA={isPWA}
             isMobile={isMobile}
@@ -232,11 +218,8 @@ function Sidebar({
             searchFilter={searchFilter}
             onSearchFilterChange={setSearchFilter}
             onClearSearchFilter={() => setSearchFilter('')}
-            searchMode={searchMode}
-            onSearchModeChange={(mode) => {
-              setSearchMode(mode);
-              if (mode === 'projects') clearConversationResults();
-            }}
+            sidebarOverlay={sidebarOverlay}
+            onSetOverlay={setSidebarOverlay}
             conversationResults={conversationResults}
             isSearching={isSearching}
             searchProgress={searchProgress}
@@ -285,9 +268,6 @@ function Sidebar({
             isRefreshing={isRefreshing}
             onCreateProject={() => setShowNewProject(true)}
             onCollapseSidebar={handleCollapseSidebar}
-            onBulkArchiveOlderThanDays={(days) => {
-              void bulkArchiveSessionsByAge(days);
-            }}
             restartRequired={restartRequired}
             currentVersion={currentVersion}
             onShowSettings={onShowSettings}
