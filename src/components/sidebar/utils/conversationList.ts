@@ -66,6 +66,16 @@ export function isSessionDone(
   return !viewed || completed > viewed;
 }
 
+/**
+ * True when the server detected a live run for a session cloudcli didn't launch
+ * (a bare-terminal `claude` writing the same transcript, #21). Only meaningful
+ * for sessions absent from the client `activeSessions` map — for those cloudcli
+ * launched, the client's own live state is authoritative.
+ */
+function isServerLive(session: SessionWithProvider): boolean {
+  return session.liveStatus === 'blocked' || session.liveStatus === 'working';
+}
+
 export function resolveStatus(
   session: SessionWithProvider,
   activeSessions: SessionActivityMap,
@@ -81,9 +91,19 @@ export function resolveStatus(
   if (activeSessions.has(sessionId)) {
     return 'running';
   }
+  // No client-side run for this session — cloudcli didn't launch it. Fall back
+  // to the server's transcript-derived live status so terminal sessions rank
+  // alongside cloudcli-driven ones. Blocked (awaiting input) outranks Done.
+  if (session.liveStatus === 'blocked') {
+    return 'blocked';
+  }
   // Finished and not yet reviewed.
   if (isSessionDone(session, selectedSessionId)) {
     return 'done';
+  }
+  // A terminal session still actively working ranks Running, below Done.
+  if (session.liveStatus === 'working') {
+    return 'running';
   }
   return 'recent';
 }
@@ -110,7 +130,10 @@ export function buildConversationList(
         project,
         session,
         status,
-        isActive: activeSessions.has(String(session.id)),
+        // A run is in flight if cloudcli launched it (client `activeSessions`) or
+        // the server sees the terminal transcript live (working/blocked). Either
+        // way the row should suppress destructive actions like delete.
+        isActive: activeSessions.has(String(session.id)) || isServerLive(session),
         activityTime: getSessionDate(session).getTime(),
       });
     }
