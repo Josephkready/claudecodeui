@@ -157,6 +157,19 @@ describe('getUserTurnOrdinalBefore', () => {
     const realtime = [server[1], assistant('rt', 'two', 3)];
     assert.equal(getUserTurnOrdinalBefore(realtime[1], server, realtime), 1);
   });
+
+  it('only collapses optimistic (local_) prompts against a server echo, not other rows', () => {
+    // The echo collapse is scoped to `local_*` rows, matching computeMerged /
+    // pruneRealtimeSupersededByServer. A non-optimistic realtime user row is
+    // rendered as its own bubble there, so it must also count as its own turn
+    // here — even if its text happens to match a server row. Three user rows
+    // (u0, srv_dupe, rt_dupe) precede the reply, so its ordinal is 2. Were the
+    // `local_*` guard dropped, rt_dupe would be collapsed and the ordinal would
+    // wrongly fall to 1.
+    const server = [user('u0', 'first', 0), user('srv_dupe', 'second', 2)];
+    const realtime = [user('rt_dupe', 'second', 2), assistant('rt', 'reply', 3)];
+    assert.equal(getUserTurnOrdinalBefore(realtime[1], server, realtime), 2);
+  });
 });
 
 describe('isAssistantTextEchoedInSameTurnOnServer', () => {
@@ -411,6 +424,16 @@ describe('computeMerged', () => {
     const once = computeMerged(server, realtime);
     assert.deepEqual(ids(computeMerged(once, [])), ids(once));
     assert.deepEqual(ids(computeMerged(once, realtime)), ids(once));
+  });
+
+  it('sorts a row with an unparseable timestamp to the front instead of throwing', () => {
+    // Date.parse fails → readMessageTime returns null → the comparator treats it
+    // as time 0, so it sorts ahead of dated rows rather than producing NaN.
+    const undated = message({ id: 'undated', kind: 'status', timestamp: 'not-a-date' });
+    const server = [user('u0', 'first', 5), assistant('a0', 'one', 6)];
+    const merged = computeMerged(server, [undated]);
+    assert.equal(merged[0].id, 'undated');
+    assert.deepEqual(ids(merged), ['undated', 'u0', 'a0']);
   });
 
   it('preserves every distinct bubble — no drops', () => {

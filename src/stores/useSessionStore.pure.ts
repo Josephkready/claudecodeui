@@ -204,13 +204,15 @@ export function getUserTurnOrdinalBefore(
   // twice. Counting both copies pushed the ordinal past the end of the server
   // transcript, `findServerTurnRangeByOrdinal` then returned null, and the
   // same-turn echo check gave up: the finalized reply was rendered a second
-  // time next to its persisted copy.
+  // time next to its persisted copy. The `local_*` guard mirrors `computeMerged`
+  // and `pruneRealtimeSupersededByServer`: only optimistic rows are collapsed
+  // against their server echo, so a non-optimistic user row is never dropped.
+  const alreadyOnServer = (realtimeMessage: NormalizedMessage): boolean =>
+    serverIds.has(realtimeMessage.id)
+    || (realtimeMessage.id.startsWith('local_') && hasServerEchoForLocalUser(realtimeMessage, serverMessages));
   const candidates = [
     ...serverMessages,
-    ...realtimeMessages.filter((realtimeMessage) =>
-      !serverIds.has(realtimeMessage.id)
-      && !hasServerEchoForLocalUser(realtimeMessage, serverMessages),
-    ),
+    ...realtimeMessages.filter((realtimeMessage) => !alreadyOnServer(realtimeMessage)),
   ].sort(compareMessagesChronologically);
 
   let userCount = 0;

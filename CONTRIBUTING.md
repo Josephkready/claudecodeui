@@ -87,8 +87,14 @@ harness when static markup is not enough.
 When a hook or store hides risky logic in module-private helpers, split those
 helpers into a `<module>.pure.ts` sibling and leave the hook as a thin wrapper
 that imports them. A `.pure.ts` module holds plain functions over plain data —
-no React, no `fetch`, no browser globals — so `<module>.pure.test.ts` can cover
-it with `node:test` and no render harness. Existing examples:
+no React, no effects, no render harness — so most of it can be covered with
+`node:test` in a `<module>.pure.test.ts` file. Existing examples:
 `src/stores/useSessionStore.pure.ts` (message merge/dedup/ordering),
 `src/hooks/useProjectsState.pure.ts`, `src/hooks/useUiPreferences.pure.ts`,
 `src/components/chat/hooks/useSlashCommands.pure.ts`.
+
+A pure helper may still read a browser global (e.g. a `localStorage`-backed
+initial read). Keep it in the `.pure.ts` file, but cover that part in a
+`.pure.spec.ts` vitest/jsdom file rather than `.pure.test.ts` — see
+`useUiPreferences.pure.ts` (`readInitialPreferences`) and its
+`useUiPreferences.pure.spec.ts` for the split.

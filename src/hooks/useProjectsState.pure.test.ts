@@ -171,6 +171,13 @@ describe('mergeExpandedSessionPages', () => {
     assert.equal(mergeExpandedSessionPages(previous, incoming)[0], incoming[0]);
   });
 
+  it('prefers the incoming page when previous and incoming loaded counts are equal', () => {
+    // Pins the `<=` boundary: equal counts must take the fresh snapshot, not merge.
+    const previous = [project({ sessions: [session('s1'), session('s2')] })];
+    const incoming = [project({ sessions: [session('s1'), session('s3')] })];
+    assert.equal(mergeExpandedSessionPages(previous, incoming)[0], incoming[0]);
+  });
+
   it('passes through projects that are new to this snapshot', () => {
     const previous = [project({ projectId: 'p1', sessions: [session('s1'), session('s2')] })];
     const incoming = [project({ projectId: 'p2', sessions: [] })];
@@ -248,6 +255,15 @@ describe('getSessionAliasIds', () => {
   it('trims surrounding whitespace', () => {
     const ids = getSessionAliasIds(upsertEvent({ sessionId: '  s1  ', session: session('s1') }));
     assert.deepEqual([...ids], ['s1']);
+  });
+
+  it('does not throw when the event carries no session', () => {
+    const ids = getSessionAliasIds(upsertEvent({
+      sessionId: 's1',
+      providerSessionId: 'provider-abc',
+      session: undefined as unknown as ProjectSession,
+    }));
+    assert.deepEqual([...ids].sort(), ['provider-abc', 's1']);
   });
 });
 
