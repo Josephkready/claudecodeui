@@ -27,7 +27,7 @@ npm ci             # install dependencies
 npm run dev        # server + client with hot reload
 npm run build      # production build (vite + tsc)
 npm run typecheck  # tsc --noEmit (client + server)
-npm test           # server + unit test suites
+npm test           # server, front-end unit, and component test suites
 npm run lint       # eslint src/ server/
 ```
 

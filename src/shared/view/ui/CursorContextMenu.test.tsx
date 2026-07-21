@@ -7,10 +7,10 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ActionMenuItem } from './ActionMenu';
 import CursorContextMenu from './CursorContextMenu';
 
-// Static-render smoke coverage. The open/close, outside-click, Escape, and
-// keyboard-nav behavior needs a DOM (jsdom/RTL — tracked by #103) and isn't
-// exercised here; these assertions lock in the closed-by-default render and that
-// edge-case props (empty items, disabled) don't throw during render.
+// Static-render smoke coverage: the closed-by-default render, and that edge-case
+// props (empty items, disabled) don't throw. The open/close, outside-click,
+// Escape, and keyboard-nav behavior needs a DOM and is covered against the shared
+// hook in `useCursorContextMenu.spec.tsx` (vitest + jsdom).
 
 const noop = () => {};
 const items: ActionMenuItem[] = [
