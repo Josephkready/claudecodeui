@@ -11,8 +11,10 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
 
-// Initialises i18next once for the whole run so components calling `t()` render
-// the real English strings instead of raw keys.
+// Initialises i18next so components calling `t()` render the real English
+// strings instead of raw keys. Vitest isolates modules per spec file, so this
+// runs once per file — a spec that calls `i18n.changeLanguage()` would leak that
+// language to later tests in the same file and should reset it itself.
 import '@/i18n/config.js';
 
 if (typeof window.matchMedia !== 'function') {
@@ -46,10 +48,12 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
   globalThis.IntersectionObserver = StubObserver as unknown as typeof IntersectionObserver;
 }
 
-// jsdom leaves these unimplemented and logs a noisy "Not implemented" error when
-// a component calls them during a scroll-into-view or auto-scroll effect.
+// jsdom has no layout engine, so scrolling is either missing outright
+// (`scrollIntoView`) or present as a stub that logs a noisy "Not implemented"
+// error (`scrollTo`). The latter must be replaced unconditionally — it is a
+// function already, so a `??` fallback would never fire.
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
-window.scrollTo = window.scrollTo ?? (() => {});
+window.scrollTo = () => {};
 window.HTMLElement.prototype.hasPointerCapture ??= () => false;
 window.HTMLElement.prototype.releasePointerCapture ??= () => {};
 

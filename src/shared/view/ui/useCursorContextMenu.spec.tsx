@@ -1,6 +1,6 @@
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { useCursorContextMenu } from './useCursorContextMenu';
 
@@ -64,7 +64,7 @@ describe('useCursorContextMenu', () => {
     expect(result.current.isMenuOpen).toBe(false);
   });
 
-  it('closes on a real Escape keydown and detaches its listener afterwards', () => {
+  it('closes on a real Escape keydown', () => {
     const { result } = renderHook(() => useCursorContextMenu());
 
     act(() => result.current.openContextMenuAtCursor(contextMenuEvent(10, 10)));
@@ -73,13 +73,33 @@ describe('useCursorContextMenu', () => {
     });
 
     expect(result.current.isMenuOpen).toBe(false);
+  });
 
-    // A second Escape against the closed menu must be a no-op, which only holds
-    // if the effect cleanup removed the document listener.
+  it('removes every document listener it added once the menu closes', () => {
+    // Asserting "a second Escape does nothing" would be vacuous - closing an
+    // already-closed menu is a no-op either way. Counting the listeners is what
+    // actually pins the effect cleanup, so an open/close cycle can't leak one.
+    const addSpy = vi.spyOn(document, 'addEventListener');
+    const removeSpy = vi.spyOn(document, 'removeEventListener');
+    const countOf = (spy: typeof addSpy, type: string) =>
+      spy.mock.calls.filter(([eventType]) => eventType === type).length;
+
+    const { result } = renderHook(() => useCursorContextMenu());
+    expect(countOf(addSpy, 'keydown')).toBe(0);
+
+    act(() => result.current.openContextMenuAtCursor(contextMenuEvent(10, 10)));
+
+    // Two keydown listeners: dismissal (Escape) and roving-focus navigation.
+    expect(countOf(addSpy, 'keydown')).toBe(2);
+    expect(countOf(addSpy, 'mousedown')).toBe(1);
+    expect(countOf(removeSpy, 'keydown')).toBe(0);
+
     act(() => {
       fireEvent.keyDown(document, { key: 'Escape' });
     });
-    expect(result.current.isMenuOpen).toBe(false);
+
+    expect(countOf(removeSpy, 'keydown')).toBe(2);
+    expect(countOf(removeSpy, 'mousedown')).toBe(1);
   });
 
   it('closes on an outside mousedown but not on one inside the menu', () => {

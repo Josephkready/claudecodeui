@@ -30,6 +30,12 @@ To see coverage summaries for all three:
 npm run test:coverage
 ```
 
+That is just `test:server:coverage`, `test:unit:coverage`, and
+`test:component:coverage` in sequence — run whichever one you need on its own.
+The first two use Node's built-in `--experimental-test-coverage`; the component
+one uses vitest's v8 provider and also writes a browsable report to
+`coverage/component/`.
+
 ## Two test runners, split by filename
 
 | Suite | Files | Runner | Command |
@@ -54,9 +60,10 @@ never overlap. Pick by what the test needs:
 dependency interop). `src/test/setup.ts` runs before every component spec: it
 initialises i18next, registers `@testing-library/jest-dom` matchers, stubs the
 browser APIs jsdom omits (`matchMedia`, `ResizeObserver`,
-`IntersectionObserver`, scrolling, `navigator.clipboard`), and clears
-`localStorage`/`sessionStorage` between tests — add shared stubs there rather
-than hand-rolling them per file.
+`IntersectionObserver`, scrolling, `navigator.clipboard`), and resets state
+between tests (`localStorage`/`sessionStorage`, the `<html>` class list, fake
+timers, and the rendered DOM). Add shared stubs there rather than hand-rolling
+them per file; `src/test/setup.spec.ts` guards that they stay installed.
 
 ## Testing expectations
 
