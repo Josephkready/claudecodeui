@@ -13,6 +13,7 @@ import { useChatComposerState } from '../hooks/useChatComposerState';
 import { useInterruptedResume } from '../hooks/useInterruptedResume';
 import { useSessionStore } from '../../../stores/useSessionStore';
 import { shouldOfferResume } from '../utils/interruptedResume';
+import { sendSubscribeBatch } from '../utils/subscribeTargets';
 
 import ChatMessagesPane from './subcomponents/ChatMessagesPane';
 import ChatComposer from './subcomponents/ChatComposer';
@@ -213,21 +214,33 @@ function ChatInterface({
   });
 
   // On WebSocket reconnect, re-fetch the current session's messages from the
-  // server so missed streaming events are shown, then re-subscribe — the
+  // server so missed streaming events are shown, then re-subscribe. The
   // `chat_subscribed` ack restores or clears the activity indicator, replays
   // missed live events, and re-attaches a still-running stream to this socket.
+  //
+  // Crucially, we re-subscribe EVERY session the client believes is running —
+  // not just the viewed one — so a background run does not keep its server-side
+  // writer pointed at the dead socket, silently losing its stream and terminal
+  // `complete` until the user next switches to it (issue #204). The running set
+  // comes from the shared `/api/providers/sessions/running` poll.
   const handleWebSocketReconnect = useCallback(async () => {
-    if (!selectedProject || !selectedSession) return;
-    await sessionStore.refreshFromServer(selectedSession.id);
-    statusCheckSentAtRef.current.set(selectedSession.id, Date.now());
-    sendMessage({
-      type: 'chat.subscribe',
-      sessions: [{
-        sessionId: selectedSession.id,
-        lastSeq: lastSeqRef.current.get(selectedSession.id) ?? 0,
-      }],
+    // Refresh the viewed session's transcript (if one is open) so missed
+    // streaming events are shown. A reconnect with no session in view still
+    // re-subscribes background runs below — otherwise a run with no open viewer
+    // at reconnect time would never re-attach (the second half of issue #204).
+    if (selectedProject && selectedSession) {
+      await sessionStore.refreshFromServer(selectedSession.id);
+    }
+
+    sendSubscribeBatch({
+      selectedSessionId: selectedSession?.id ?? null,
+      runningSessionIds: processingSessions ? processingSessions.keys() : [],
+      lastSeqFor: (id) => lastSeqRef.current.get(id) ?? 0,
+      now: Date.now(),
+      markSubscribeSent: (id, at) => statusCheckSentAtRef.current.set(id, at),
+      send: sendMessage,
     });
-  }, [selectedProject, selectedSession, sendMessage, sessionStore]);
+  }, [selectedProject, selectedSession, sendMessage, sessionStore, processingSessions]);
 
   useChatRealtimeHandlers({
     subscribe,

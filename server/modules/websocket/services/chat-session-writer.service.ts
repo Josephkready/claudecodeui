@@ -7,7 +7,12 @@ import type {
 import { createCompleteMessage, readObjectRecord } from '@/shared/utils.js';
 
 type ChatSessionWriterOptions = {
-  connection: RealtimeClientConnection;
+  /**
+   * The connection that started the run, seeded as the first subscriber. Optional
+   * because the writer's subscriber set can legitimately be empty (every viewer
+   * left mid-run); further subscribers arrive via `addConnection`.
+   */
+  connection?: RealtimeClientConnection;
   userId: string | number | null;
   provider: LLMProvider;
   /** Provider-native id when resuming an existing session, otherwise null. */
@@ -44,11 +49,13 @@ type ChatSessionWriterOptions = {
 /**
  * Gateway writer handed to provider runtimes instead of a raw websocket writer.
  *
- * It exposes the exact same surface as `WebSocketWriter` (`send`,
- * `setSessionId`, `getSessionId`, `updateWebSocket`, `userId`,
- * `isWebSocketWriter`) so the provider runtimes (`claude-sdk.js`,
- * ...) need zero changes — but everything that flows through
- * it is translated from the provider's world into the app's protocol:
+ * It exposes the runtime-facing surface `WebSocketWriter` provides (`send`,
+ * `setSessionId`, `getSessionId`, `userId`, `isWebSocketWriter`) so the provider
+ * runtimes (`claude-sdk.js`, ...) need zero changes — but everything that flows
+ * through it is translated from the provider's world into the app's protocol.
+ * Connection management differs: instead of a single replaceable `ws`, it holds
+ * a fan-out set managed via `addConnection`/`removeConnection` (issue #204), so
+ * one run can stream to several devices at once:
  *
  * - `session_created` events are swallowed and turned into a provider-id
  *   mapping; the frontend never learns provider-native ids.
@@ -58,7 +65,6 @@ type ChatSessionWriterOptions = {
  *   intercepted and recorded as the provider-id mapping as well.
  */
 export class ChatSessionWriter {
-  ws: RealtimeClientConnection;
   userId: string | number | null;
   /**
    * Some runtimes feature-detect their writer with this flag; keep it so the
@@ -67,6 +73,15 @@ export class ChatSessionWriter {
   isWebSocketWriter = true;
 
   private readonly options: ChatSessionWriterOptions;
+  /**
+   * The set of live subscriber sockets receiving this run's stream. A single
+   * run can be watched from several devices/tabs at once (issue #204), so every
+   * outbound event fans out to ALL open connections here rather than a single
+   * "current" socket a later subscriber would steal. Non-open sockets are
+   * pruned on send; the chat handler also removes a socket from every run's set
+   * when it closes.
+   */
+  private readonly connections = new Set<RealtimeClientConnection>();
   /**
    * The provider-native session id as the runtime knows it. Kept locally
    * (besides the registry) because runtimes read it back via `getSessionId()`
@@ -77,9 +92,11 @@ export class ChatSessionWriter {
 
   constructor(options: ChatSessionWriterOptions) {
     this.options = options;
-    this.ws = options.connection;
     this.userId = options.userId;
     this.providerSessionId = options.providerSessionId;
+    if (options.connection) {
+      this.connections.add(options.connection);
+    }
   }
 
   send(data: unknown): void {
@@ -130,8 +147,30 @@ export class ChatSessionWriter {
     }
   }
 
-  updateWebSocket(newConnection: RealtimeClientConnection): void {
-    this.ws = newConnection;
+  /**
+   * Adds a subscriber connection to the fan-out set. Called on `chat.subscribe`
+   * so a second device (or a reconnecting one) JOINS the live stream instead of
+   * replacing the socket that started the run — the previous fix redirected the
+   * stream, leaving the first device dark and stuck "processing" (issue #204).
+   * Idempotent: a socket that re-subscribes is de-duplicated by the Set.
+   */
+  addConnection(newConnection: RealtimeClientConnection): void {
+    this.connections.add(newConnection);
+  }
+
+  /**
+   * Removes one subscriber connection (its socket closed). The run itself is
+   * untouched — remaining and future subscribers keep receiving the stream, and
+   * the buffered events stay replayable. Returns whether the connection had been
+   * attached, so the caller can count how many runs a closing socket left.
+   */
+  removeConnection(connection: RealtimeClientConnection): boolean {
+    return this.connections.delete(connection);
+  }
+
+  /** Number of live subscriber connections (test/introspection helper). */
+  get connectionCount(): number {
+    return this.connections.size;
   }
 
   setSessionId(sessionId: string): void {
@@ -169,8 +208,25 @@ export class ChatSessionWriter {
   }
 
   private forward(message: NormalizedMessage): void {
-    if (this.ws.readyState === WS_OPEN_STATE) {
-      this.ws.send(JSON.stringify(message));
+    // Fan out to every subscribed socket. Serialize once and gate each socket on
+    // its own readyState so one dead connection never blocks the others, and
+    // prune closed sockets so the set cannot leak references to gone tabs. Each
+    // send is isolated in its own try/catch: `ws.send` can still throw (a socket
+    // that raced from OPEN to closing, an internal buffer error), and one such
+    // throw must not skip delivery to — or pruning of — the remaining sockets.
+    const serialized = JSON.stringify(message);
+    for (const connection of this.connections) {
+      if (connection.readyState !== WS_OPEN_STATE) {
+        this.connections.delete(connection);
+        continue;
+      }
+      try {
+        connection.send(serialized);
+      } catch (error) {
+        this.connections.delete(connection);
+        const messageText = error instanceof Error ? error.message : String(error);
+        console.error('[ChatSessionWriter] Failed to send to a subscriber; pruning it', messageText);
+      }
     }
   }
 }
