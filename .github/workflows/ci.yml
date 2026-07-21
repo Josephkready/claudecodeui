@@ -43,3 +43,6 @@ jobs:
 
       - name: Frontend unit tests (with coverage)
         run: npm run test:unit:coverage
+
+      - name: Frontend component tests (with coverage)
+        run: npm run test:component:coverage

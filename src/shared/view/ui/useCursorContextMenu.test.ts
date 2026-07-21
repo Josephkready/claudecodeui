@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 
 import { calculateViewportSafePosition, isActivatableMenuTarget } from './useCursorContextMenu';
 
-// Pure-helper coverage for the shared cursor-context-menu chrome. The stateful
-// hook wiring (effects, focus, listeners) needs a DOM harness (#103) and isn't
-// exercised here; these lock in the geometry and the scoped keyboard-activation
-// predicate — the latter being the file-tree vs session-menu divergence #161 unifies.
+// Pure-helper coverage for the shared cursor-context-menu chrome: the geometry
+// and the scoped keyboard-activation predicate — the latter being the file-tree
+// vs session-menu divergence #161 unifies. The stateful hook wiring (effects,
+// focus, document listeners) needs a DOM and lives in the vitest companion
+// `useCursorContextMenu.spec.tsx`.
 
 function withWindow(innerWidth: number, innerHeight: number, run: () => void) {
   const previous = (globalThis as { window?: unknown }).window;
