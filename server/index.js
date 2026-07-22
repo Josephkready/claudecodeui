@@ -40,6 +40,7 @@ import {
     extractUrlsFromText,
     shouldAutoOpenUrlFromOutput,
 } from './utils/url-detection.js';
+import { runMockAgentProvider } from './routes/mock-agent-provider.js';
 import gitRoutes from './routes/git.js';
 import authRoutes from './routes/auth.js';
 import commandsRoutes from './routes/commands.js';
@@ -87,6 +88,28 @@ console.log('SERVER_PORT from env:', process.env.SERVER_PORT);
 const app = express();
 const server = http.createServer(app);
 
+// Test-only seam (#102): when AGENT_MOCK_PROVIDER=true, re-point the real chat
+// provider runtimes at the deterministic in-process mock (routes/mock-agent-provider.js)
+// so a Playwright/e2e browser session can drive a full chat turn — send ->
+// streamed frames -> terminal `complete` — with no real CLI/SDK, network, or
+// auth. The session's provider column stays 'claude'/'codex', so the frontend
+// flow is unchanged; only the runtime that streams frames is swapped. Read live
+// (not import-frozen) so it is a pure env toggle, mirroring the POST /api/agent
+// gate in routes/agent.js.
+const AGENT_MOCK_PROVIDER = process.env.AGENT_MOCK_PROVIDER === 'true';
+const makeMockSpawnFn = (provider) => (message, options, writer) => {
+    // Per-turn breadcrumb (mirrors the REST seam's log in routes/agent.js) so a
+    // mock-served chat run is individually traceable, not just inferable from
+    // the one-time startup warning.
+    console.log(`🧪 chat run served by mock provider (AGENT_MOCK_PROVIDER) [provider=${provider}]`);
+    return runMockAgentProvider(message, { ...options, provider }, writer);
+};
+const chatSpawnFns = AGENT_MOCK_PROVIDER
+    ? { claude: makeMockSpawnFn('claude'), codex: makeMockSpawnFn('codex') }
+    : { claude: queryClaudeSDK, codex: queryCodex };
+// The activation warning is emitted in the "Ready" banner below (next to the
+// AUTH_DISABLED warning), where an operator scanning startup output will see it.
+
 // Single WebSocket server that handles chat, shell, and plugin proxy paths.
 const wss = createWebSocketServer(server, {
     verifyClient: {
@@ -94,10 +117,7 @@ const wss = createWebSocketServer(server, {
         authenticateWebSocket,
     },
     chat: {
-        spawnFns: {
-            claude: queryClaudeSDK,
-            codex: queryCodex,
-        },
+        spawnFns: chatSpawnFns,
         abortFns: {
             claude: abortClaudeSDKSession,
             codex: abortCodexSession,
@@ -1290,6 +1310,9 @@ async function startServer() {
             console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
             if (AUTH_DISABLED) {
                 console.warn('[WARN] VITE_AUTH_DISABLED is set — login is OFF; every request runs as the single default user.');
+            }
+            if (AGENT_MOCK_PROVIDER) {
+                console.warn('[WARN] AGENT_MOCK_PROVIDER is set — chat runs use the deterministic in-process mock provider, NOT a real CLI/SDK.');
             }
             console.log('');
 

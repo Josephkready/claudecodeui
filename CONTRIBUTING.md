@@ -103,6 +103,22 @@ whose entries stay own-enumerable so `Object.keys(localStorage)` works), and
 the same `localStorage`/`window`/`t()` boilerplate; `src/test/nodeStubs.test.ts`
 guards their behavior.
 
+## Browser e2e (Playwright)
+
+`npm run test:e2e` runs the Playwright browser suite in `e2e/` — separate from
+the three unit runners above, with its own CI job
+(`.github/workflows/e2e.yml`).
+
+- One-time setup: `npx playwright install chromium`.
+- It builds the client once (with `VITE_AUTH_DISABLED=true` baked in) and boots
+  one server per worker with a throwaway DB and a temp HOME under `/var/tmp`,
+  seeded over REST. Chat runs use the deterministic in-process mock provider
+  (`AGENT_MOCK_PROVIDER=true`), so no real CLI/SDK, network, or credentials are
+  needed. See `e2e/fixtures.ts` for the isolation details.
+- Use e2e for full-app DOM/WebSocket flows — not as a substitute for
+  unit-testing pure logic, which still belongs in the `node:test`/vitest
+  runners above.
+
 ## Testing expectations
 
 Changes should ship with tests on every tier they touch:
