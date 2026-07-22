@@ -56,6 +56,11 @@ export const MOCK_TOKEN_BUDGET = {
  */
 export async function runMockAgentProvider(message, options = {}, writer) {
   const sessionId = options.sessionId || `mock-session-${randomUUID()}`;
+  // Provider label stamped onto the emitted frames. The chat WebSocket seam
+  // passes the real 'claude'/'codex' the session uses; the REST /api/agent seam
+  // leaves it as the test-only 'mock' sentinel (intentionally outside the
+  // LLMProvider union — these frames are only produced when AGENT_MOCK_PROVIDER
+  // is set, and no consumer branches on it).
   const provider = options.provider || 'mock';
 
   writer.setSessionId(sessionId);

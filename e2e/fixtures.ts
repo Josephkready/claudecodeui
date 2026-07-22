@@ -35,10 +35,20 @@ export type E2EServer = {
 const REPO_ROOT = process.cwd();
 const BASE_PORT = Number(process.env.E2E_BASE_PORT || 4700);
 
-async function waitForHealth(baseURL: string, timeoutMs = 45_000): Promise<void> {
+async function waitForHealth(
+  baseURL: string,
+  options: { timeoutMs?: number; isDead?: () => string | null } = {},
+): Promise<void> {
+  const { timeoutMs = 45_000, isDead } = options;
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
+    // Fail fast (with the captured server output) if the server process already
+    // exited, instead of polling a dead port for the full timeout.
+    const deadMessage = isDead?.();
+    if (deadMessage) {
+      throw new Error(`Server at ${baseURL} exited before becoming healthy. ${deadMessage}`);
+    }
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 2_000);
@@ -110,16 +120,23 @@ export const test = base.extend<
 
       // Surface server crashes in the test log without spamming normal output.
       const serverLog: string[] = [];
+      let serverExitCode: number | null | undefined;
       child.stdout?.on('data', (d) => serverLog.push(String(d)));
       child.stderr?.on('data', (d) => serverLog.push(String(d)));
       child.on('exit', (code) => {
+        serverExitCode = code;
         if (code && code !== 0) {
           console.error(`[e2e] worker ${workerInfo.workerIndex} server exited (${code}):\n${serverLog.slice(-30).join('')}`);
         }
       });
 
       try {
-        await waitForHealth(baseURL);
+        await waitForHealth(baseURL, {
+          isDead: () =>
+            serverExitCode !== undefined
+              ? `Exit code ${serverExitCode}. Last server output:\n${serverLog.slice(-30).join('')}`
+              : null,
+        });
         // Seed: complete onboarding for the default user, then register one project.
         await postJson(baseURL, '/api/user/complete-onboarding');
         await postJson(baseURL, '/api/projects/create-project', {
@@ -129,7 +146,7 @@ export const test = base.extend<
 
         await use({ baseURL, port, home, projectPath, projectName });
       } finally {
-        // Kill the whole process group (tsx may fork) and clear temp state.
+        // Kill the whole detached process group defensively, then clear temp state.
         try {
           if (child.pid) {
             process.kill(-child.pid, 'SIGKILL');

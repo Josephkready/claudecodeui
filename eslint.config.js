@@ -250,5 +250,27 @@ export default tseslint.config(
       ],
       "boundaries/no-unknown": "error", // fail fast if boundaries cannot classify a dependency, which prevents silent rule bypasses
     },
+  },
+  {
+    // Playwright e2e harness (Node test runner, not browser/React). Kept out of
+    // the src/server blocks so their React/Tailwind/boundaries rules don't apply
+    // to test tooling; still gains dead-import + TS-recommended coverage.
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    plugins: {
+      "unused-imports": unusedImports,
+    },
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { ecmaVersion: "latest", sourceType: "module" },
+      globals: { ...globals.node },
+    },
+    rules: {
+      "unused-imports/no-unused-imports": "warn",
+      "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/no-explicit-any": "off",
+      // Playwright's fixture signature idiom is `async ({}, use) => {}`.
+      "no-empty-pattern": "off",
+    },
   }
 );

@@ -97,14 +97,18 @@ const server = http.createServer(app);
 // (not import-frozen) so it is a pure env toggle, mirroring the POST /api/agent
 // gate in routes/agent.js.
 const AGENT_MOCK_PROVIDER = process.env.AGENT_MOCK_PROVIDER === 'true';
-const makeMockSpawnFn = (provider) => (message, options, writer) =>
-    runMockAgentProvider(message, { ...options, provider }, writer);
+const makeMockSpawnFn = (provider) => (message, options, writer) => {
+    // Per-turn breadcrumb (mirrors the REST seam's log in routes/agent.js) so a
+    // mock-served chat run is individually traceable, not just inferable from
+    // the one-time startup warning.
+    console.log(`🧪 chat run served by mock provider (AGENT_MOCK_PROVIDER) [provider=${provider}]`);
+    return runMockAgentProvider(message, { ...options, provider }, writer);
+};
 const chatSpawnFns = AGENT_MOCK_PROVIDER
     ? { claude: makeMockSpawnFn('claude'), codex: makeMockSpawnFn('codex') }
     : { claude: queryClaudeSDK, codex: queryCodex };
-if (AGENT_MOCK_PROVIDER) {
-    console.warn('[WARN] AGENT_MOCK_PROVIDER is set — chat runs use the deterministic in-process mock provider, NOT a real CLI/SDK.');
-}
+// The activation warning is emitted in the "Ready" banner below (next to the
+// AUTH_DISABLED warning), where an operator scanning startup output will see it.
 
 // Single WebSocket server that handles chat, shell, and plugin proxy paths.
 const wss = createWebSocketServer(server, {
@@ -1306,6 +1310,9 @@ async function startServer() {
             console.log(`${c.tip('[TIP]')}  Run "cloudcli status" for full configuration details`);
             if (AUTH_DISABLED) {
                 console.warn('[WARN] VITE_AUTH_DISABLED is set — login is OFF; every request runs as the single default user.');
+            }
+            if (AGENT_MOCK_PROVIDER) {
+                console.warn('[WARN] AGENT_MOCK_PROVIDER is set — chat runs use the deterministic in-process mock provider, NOT a real CLI/SDK.');
             }
             console.log('');
 

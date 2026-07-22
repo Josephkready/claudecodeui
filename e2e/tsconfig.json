@@ -1,0 +1,16 @@
+{
+  // Type-checks the Playwright harness (e2e/ + playwright.config.ts), which the
+  // frontend/backend tsconfigs deliberately exclude. Wired into `npm run
+  // typecheck` so a type error or unused import in a spec/fixture is caught by
+  // CI, not only when the (happy-path) browser suite runs. Node globals + the
+  // Playwright test types; no DOM/Vite ambient types needed here.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "@playwright/test"],
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}
