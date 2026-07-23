@@ -8,6 +8,7 @@ import type { SessionStore, NormalizedMessage } from '../../../stores/useSession
 import type { ChatMessage } from '../types/types';
 import { createCachedDiffCalculator, type DiffCalculator } from '../utils/messageTransforms';
 import { sendSubscribeBatch } from '../utils/subscribeTargets';
+import { stabilizeMessageIdentities } from '../utils/messageIdentity';
 
 import { normalizedToChatMessages } from './useChatMessages';
 
@@ -270,15 +271,35 @@ export function useChatSessionState({
     if (viewHiddenCount > 0) setViewHiddenCount(0);
   }
 
+  // Holds the previous render's derived messages so each stabilization pass can
+  // reuse still-valid object refs. Updated after commit (never during render)
+  // so the memo below stays pure; on render N it reads render N-1's array.
+  const previousChatMessagesRef = useRef<ChatMessage[]>([]);
+
   const chatMessages = useMemo(() => {
     const all = normalizedToChatMessages(storeMessages);
+    let derived: ChatMessage[];
     // Show pending user message when no session data exists yet (new session, pre-backend-response)
     if (pendingUserMessage && all.length === 0) {
-      return [pendingUserMessage];
+      derived = [pendingUserMessage];
+    } else if (viewHiddenCount > 0 && viewHiddenCount < all.length) {
+      derived = all.slice(0, -viewHiddenCount);
+    } else {
+      derived = all;
     }
-    if (viewHiddenCount > 0 && viewHiddenCount < all.length) return all.slice(0, -viewHiddenCount);
-    return all;
+    // `normalizedToChatMessages` mints brand-new ChatMessage objects on every
+    // store update, so an active run's per-delta `notify` would hand a fresh
+    // identity to every message each streaming tick — defeating
+    // `React.memo(MessageComponent)` and re-rendering the whole visible list
+    // (choppy scrolling while an agent works). Reuse the previous render's
+    // object refs for messages whose value is unchanged so only the message
+    // that actually changed re-renders.
+    return stabilizeMessageIdentities(previousChatMessagesRef.current, derived);
   }, [storeMessages, viewHiddenCount, pendingUserMessage]);
+
+  useEffect(() => {
+    previousChatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
 
   /* ---------------------------------------------------------------- */
   /*  addMessage / clearMessages / rewindMessages                     */
@@ -431,6 +452,9 @@ export function useChatSessionState({
     pendingScrollRestoreRef.current = null;
     wasNearTopRef.current = false;
     setIsUserScrolledUp(false);
+    // Drop the outgoing session's messages so the first stabilization pass for
+    // the new session starts clean instead of comparing across sessions.
+    previousChatMessagesRef.current = [];
   }, [selectedProject?.projectId, selectedSession?.id]);
 
   // Initial scroll to bottom — robust to lazy content reflow.
