@@ -452,6 +452,9 @@ export function useChatSessionState({
     pendingScrollRestoreRef.current = null;
     wasNearTopRef.current = false;
     setIsUserScrolledUp(false);
+    // Drop the outgoing session's messages so the first stabilization pass for
+    // the new session starts clean instead of comparing across sessions.
+    previousChatMessagesRef.current = [];
   }, [selectedProject?.projectId, selectedSession?.id]);
 
   // Initial scroll to bottom — robust to lazy content reflow.
