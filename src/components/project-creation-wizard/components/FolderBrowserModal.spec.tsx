@@ -84,3 +84,58 @@ describe('FolderBrowserModal — parent row at the workspace root (#238)', () =>
     await waitFor(() => expect(parentRow()).toBeNull());
   });
 });
+
+/*
+ * #243: the picker was a hand-rolled `fixed inset-0` overlay that never opted
+ * into Esc or backdrop dismissal, while /help, /status and Token Usage all
+ * close on Esc — so users learn Esc works, then hit a dialog where it doesn't.
+ */
+describe('FolderBrowserModal — Esc and backdrop dismissal (#243)', () => {
+  it('closes on Escape', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderPicker();
+
+    await screen.findByRole('button', { name: /demo-app/ });
+    await user.keyboard('{Escape}');
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on a click on the backdrop but not inside the dialog', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderPicker();
+
+    const dialog = await screen.findByRole('dialog', { name: 'Select Folder' });
+    await user.click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.click(dialog.parentElement as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the inline new-folder field own the first Escape', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderPicker();
+
+    await screen.findByRole('button', { name: /demo-app/ });
+    await user.click(screen.getByRole('button', { name: 'Create new folder' }));
+
+    const nameField = screen.getByPlaceholderText('New folder name');
+    await user.keyboard('{Escape}');
+
+    // First Escape cancels the inline field, leaving the picker open.
+    expect(nameField).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // A second Escape then closes the picker itself.
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the close button an accessible name', async () => {
+    renderPicker();
+
+    await screen.findByRole('button', { name: /demo-app/ });
+    expect(screen.getByRole('button', { name: 'Close folder browser' })).toBeInTheDocument();
+  });
+});

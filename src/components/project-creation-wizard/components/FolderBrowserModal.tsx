@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff, FolderOpen, FolderPlus, Loader2, Plus, X } from 'lucide-react';
 import { Button, Input } from '../../../shared/view/ui';
+import { useOverlayDismiss } from '../../../shared/view/ui/useOverlayDismiss';
 import { browseFilesystemFolders, createFolderInFilesystem } from '../data/workspaceApi';
 import { getParentPath, joinFolderPath } from '../utils/pathUtils';
 import type { FolderSuggestion } from '../types';
@@ -68,11 +69,18 @@ export default function FolderBrowserModal({
     setNewFolderName('');
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setError(null);
     resetNewFolderState();
     onClose();
-  };
+  }, [onClose]);
+
+  // While the inline new-folder field is open it owns Escape (cancelling the
+  // field), so the picker only claims the key once that field is gone (#243).
+  const { backdropProps } = useOverlayDismiss({
+    isActive: isOpen && !showNewFolderInput,
+    onDismiss: handleClose,
+  });
 
   const handleCreateFolder = useCallback(async () => {
     if (!newFolderName.trim()) {
@@ -104,14 +112,24 @@ export default function FolderBrowserModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+      {...backdropProps}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="folder-browser-title"
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800"
+      >
         <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/50">
               <FolderOpen className="h-4 w-4 text-blue-600 dark:text-blue-400" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Select Folder</h3>
+            <h3 id="folder-browser-title" className="text-lg font-semibold text-gray-900 dark:text-white">
+              Select Folder
+            </h3>
           </div>
 
           <div className="flex items-center gap-2">
@@ -140,6 +158,8 @@ export default function FolderBrowserModal({
             <button
               onClick={handleClose}
               className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+              title="Close folder browser"
+              aria-label="Close folder browser"
             >
               <X className="h-5 w-5" />
             </button>
