@@ -21,6 +21,7 @@ import {
   type QueuedSendOptions,
 } from '../utils/chatStorage';
 import { decideQueueFlush } from '../utils/queueFlush';
+import { resolveEnterKeyAction } from '../utils/enterKeyAction';
 import type {
   ChatMessage,
   PendingPermissionRequest,
@@ -49,6 +50,11 @@ interface UseChatComposerStateArgs {
   tokenBudget: Record<string, unknown> | null;
   sendMessage: (message: unknown) => void;
   sendByCtrlEnter?: boolean;
+  /**
+   * Mobile/touch layout. When set, plain Enter inserts a newline instead of
+   * sending (the on-screen keyboard's Return should not fire the message).
+   */
+  isMobile?: boolean;
   onSessionProcessing?: MarkSessionProcessing;
   /**
    * Invoked with the freshly allocated session id when the user sends the
@@ -218,6 +224,7 @@ export function useChatComposerState({
   tokenBudget,
   sendMessage,
   sendByCtrlEnter,
+  isMobile,
   onSessionProcessing,
   onSessionEstablished,
   onInputFocusChange,
@@ -1101,14 +1108,17 @@ export function useChatComposerState({
       }
 
       if (event.key === 'Enter') {
-        if (event.nativeEvent.isComposing) {
-          return;
-        }
+        const action = resolveEnterKeyAction({
+          key: event.key,
+          shiftKey: event.shiftKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          isComposing: event.nativeEvent.isComposing,
+          sendByCtrlEnter: Boolean(sendByCtrlEnter),
+          isMobile: Boolean(isMobile),
+        });
 
-        if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
-          event.preventDefault();
-          handleSubmit(event);
-        } else if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !sendByCtrlEnter) {
+        if (action === 'submit') {
           event.preventDefault();
           handleSubmit(event);
         }
@@ -1119,6 +1129,7 @@ export function useChatComposerState({
       handleCommandMenuKeyDown,
       handleFileMentionsKeyDown,
       handleSubmit,
+      isMobile,
       sendByCtrlEnter,
       showCommandMenu,
       showFileDropdown,
