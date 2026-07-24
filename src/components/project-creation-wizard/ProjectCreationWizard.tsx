@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import { FolderPlus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+import { useOverlayDismiss } from '../../shared/view/ui/useOverlayDismiss';
 import ErrorBanner from './components/ErrorBanner';
 import StepConfiguration from './components/StepConfiguration';
 import StepReview from './components/StepReview';
@@ -136,15 +138,27 @@ export default function ProjectCreationWizard({
     [formState.githubUrl],
   );
 
+  // Don't let Esc or a stray backdrop click abandon an in-flight create — the
+  // X button is disabled for the same reason (#243).
+  const { backdropProps } = useOverlayDismiss({ isActive: !isCreating, onDismiss: onClose });
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 top-0 z-[60] flex items-center justify-center bg-black/50 p-0 backdrop-blur-sm sm:p-4">
-      <div className="h-full w-full overflow-y-auto rounded-none border-0 border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:h-auto sm:max-w-2xl sm:rounded-lg sm:border">
+    <div
+      className="fixed bottom-0 left-0 right-0 top-0 z-[60] flex items-center justify-center bg-black/50 p-0 backdrop-blur-sm sm:p-4"
+      {...backdropProps}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-wizard-title"
+        className="h-full w-full overflow-y-auto rounded-none border-0 border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800 sm:h-auto sm:max-w-2xl sm:rounded-lg sm:border"
+      >
         <div className="flex items-center justify-between border-b border-gray-200 p-6 dark:border-gray-700">
           <div className="flex items-center gap-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/50">
               <FolderPlus className="h-4 w-4 text-blue-600 dark:text-blue-400" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+            <h3 id="project-wizard-title" className="text-lg font-semibold text-gray-900 dark:text-white">
               {t('projectWizard.title')}
             </h3>
           </div>

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import { Button, Input } from '../../../../shared/view/ui';
+import { useOverlayDismiss } from '../../../../shared/view/ui/useOverlayDismiss';
 import {
   MCP_PROVIDER_NAMES,
   MCP_SUPPORTED_SCOPES,
@@ -108,6 +109,12 @@ export default function McpServerFormModal({
     onSubmit,
   });
 
+  // Don't let Esc or a stray backdrop click discard a submission in flight (#243).
+  const { backdropProps } = useOverlayDismiss({
+    isActive: isOpen && !isSubmitting,
+    onDismiss: onClose,
+  });
+
   if (!isOpen) {
     return null;
   }
@@ -121,10 +128,15 @@ export default function McpServerFormModal({
   const showCodexOnlyFields = provider === 'codex' && !isGlobalMode;
 
   return createPortal(
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4">
-      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-background">
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4" {...backdropProps}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mcp-server-form-title"
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-background"
+      >
         <div className="flex items-center justify-between border-b border-border p-4">
-          <h3 className="text-lg font-medium text-foreground">{modalTitle}</h3>
+          <h3 id="mcp-server-form-title" className="text-lg font-medium text-foreground">{modalTitle}</h3>
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>

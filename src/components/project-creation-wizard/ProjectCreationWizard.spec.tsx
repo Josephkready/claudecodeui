@@ -57,3 +57,50 @@ describe('ProjectCreationWizard — validation banner lifecycle (#237)', () => {
     await waitFor(() => expect(screen.queryByText(PATH_ERROR)).toBeNull());
   });
 });
+
+/*
+ * #243: the wizard is a hand-rolled `fixed inset-0` overlay with no keydown
+ * handler, so Esc and backdrop clicks did nothing — while /help, /status and
+ * Token Usage all close on Esc.
+ */
+describe('ProjectCreationWizard — Esc and backdrop dismissal (#243)', () => {
+  it('closes on Escape', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderWizard();
+
+    await user.keyboard('{Escape}');
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on a click on the backdrop but not inside the dialog', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderWizard();
+
+    const dialog = screen.getByRole('dialog', { name: /create new project/i });
+    await user.click(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.click(dialog.parentElement as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape closes only the folder picker while it is stacked on top', async () => {
+    const user = userEvent.setup();
+    const { onClose } = renderWizard();
+
+    await user.click(screen.getByRole('button', { name: 'Browse folders' }));
+    expect(await screen.findByRole('dialog', { name: 'Select Folder' })).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+
+    // The picker is gone, the wizard survives.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select Folder' })).toBeNull());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: /create new project/i })).toBeInTheDocument();
+
+    // A second Escape then closes the wizard.
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
