@@ -54,7 +54,14 @@ export default function ProjectCreationWizard({
   });
 
   // Keep cross-step values in this component; local UI state lives in child components.
+  //
+  // Editing a field is the user acting on whatever the banner asked for, so the
+  // banner is stale from that moment on. Clearing it here covers both the typed
+  // input and the folder-picker/suggestion selections, which all route through
+  // this callback (#237). `autoSelectToken` deliberately bypasses it: that write
+  // is automatic, not a user action, so it must not dismiss a live error.
   const updateField = useCallback(<K extends keyof WizardFormState>(key: K, value: WizardFormState[K]) => {
+    setError(null);
     setFormState((previous) => ({ ...previous, [key]: value }));
   }, []);
 
