@@ -86,6 +86,9 @@ export const browseFilesystemFolders = async (pathToBrowse: string) => {
   return {
     path: data.path || pathToBrowse,
     suggestions: (data.suggestions || []) as FolderSuggestion[],
+    // Defaults to false so a server build that doesn't send the field leaves
+    // the picker's ".." row exactly as it was rather than hiding it everywhere.
+    isAtRoot: Boolean(data.isAtRoot),
   };
 };
 

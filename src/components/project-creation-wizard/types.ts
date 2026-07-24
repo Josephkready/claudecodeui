@@ -22,6 +22,8 @@ export type CredentialsResponse = {
 export type BrowseFilesystemResponse = {
   path?: string;
   suggestions?: FolderSuggestion[];
+  /** True when `path` is the configured WORKSPACES_ROOT — i.e. it has no navigable parent. */
+  isAtRoot?: boolean;
   error?: string;
 };
 
