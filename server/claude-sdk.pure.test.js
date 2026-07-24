@@ -344,9 +344,21 @@ test('mapCliOptionsToSDK resolves an effort the selected model supports', () => 
 });
 
 test('mapCliOptionsToSDK drops an effort the selected model does not support', () => {
-  // "sonnet" has no xhigh tier; forwarding it would make the CLI reject the run.
-  assert.equal('effort' in mapCliOptionsToSDK({ model: 'sonnet', effort: 'xhigh' }), false);
+  // "haiku" exposes no effort tiers at all; forwarding one would make the CLI reject the run.
+  assert.equal('effort' in mapCliOptionsToSDK({ model: 'haiku', effort: 'high' }), false);
   assert.equal(mapCliOptionsToSDK({ model: 'fable', effort: 'xhigh' }).effort, 'xhigh');
+});
+
+test('mapCliOptionsToSDK forwards xhigh for every model generation that supports it', () => {
+  // Opus 5 and Sonnet 5 both expose an xhigh tier. Before the Opus 5 catalog
+  // refresh, "default"/"sonnet" omitted it and this effort was silently dropped.
+  for (const model of ['default', 'sonnet', 'sonnet[1m]', 'opus', 'opus[1m]']) {
+    assert.equal(
+      mapCliOptionsToSDK({ model, effort: 'xhigh' }).effort,
+      'xhigh',
+      `expected "${model}" to forward the xhigh effort`,
+    );
+  }
 });
 
 test('mapCliOptionsToSDK treats the "default" effort as unset', () => {
