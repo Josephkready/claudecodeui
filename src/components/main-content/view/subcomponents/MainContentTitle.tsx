@@ -6,6 +6,8 @@ import type { AppTab, Project, ProjectSession } from '../../../../types/app';
 import { usePlugins } from '../../../../contexts/PluginsContext';
 import { resolveTitleCommit } from '../../utils/titleRename';
 
+import CliOriginBadge from './CliOriginBadge';
+
 type MainContentTitleProps = {
   activeTab: AppTab;
   selectedProject: Project;
@@ -113,14 +115,20 @@ export default function MainContentTitle({
                 className="w-full rounded border border-primary/40 bg-background px-1 py-0.5 text-sm font-semibold leading-tight text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
               />
             ) : (
-              <button
-                type="button"
-                onClick={startEditingTitle}
-                title={t('mainContent.renameSessionHint', 'Click to rename')}
-                className="-mx-1 block max-w-full truncate rounded px-1 text-left text-sm font-semibold leading-tight text-foreground hover:bg-accent/50"
-              >
-                {sessionTitle}
-              </button>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={startEditingTitle}
+                  title={t('mainContent.renameSessionHint', 'Click to rename')}
+                  className="-mx-1 min-w-0 truncate rounded px-1 text-left text-sm font-semibold leading-tight text-foreground hover:bg-accent/50"
+                >
+                  {sessionTitle}
+                </button>
+                {/* Surface a terminal/CLI-started session in the opened-session
+                    header (#225), reusing the sidebar's hedged badge so it no
+                    longer looks identical to a cloudcli-driven run. */}
+                {selectedSession.origin === 'cli' && <CliOriginBadge size="md" />}
+              </div>
             )}
             <div className="truncate text-[11px] leading-tight text-muted-foreground">{selectedProject.displayName}</div>
           </div>

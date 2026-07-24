@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -231,5 +231,40 @@ describe('MainContentSessionTabs — CLI-origin filter (#216)', () => {
     );
 
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+/*
+ * #225: surface the CLI origin on the open-session tab strip too — a tab whose
+ * session cloudcli isn't driving (origin === 'cli') gets the same hedged badge
+ * the sidebar Conversations list uses, so a terminal-started session no longer
+ * looks identical to a cloudcli-driven one once it's shown.
+ */
+describe('MainContentSessionTabs — CLI-origin badge (#225)', () => {
+  it('badges only the CLI-origin tab when CLI chats are shown', () => {
+    setHideCliOriginChats(false);
+    renderOriginTabs();
+
+    // Exactly one badge, on the terminal-started tab — cloudcli/origin-less stay clean.
+    const badges = screen.getAllByLabelText('Session not driven by cloudcli');
+    expect(badges).toHaveLength(1);
+
+    const cliPill = screen.getByText('Terminal chat').closest('button');
+    expect(cliPill).not.toBeNull();
+    expect(within(cliPill as HTMLElement).getByLabelText('Session not driven by cloudcli')).toBeInTheDocument();
+    expect(within(cliPill as HTMLElement).getByText('CLI')).toBeInTheDocument();
+
+    const cloudPill = screen.getByText('CloudCLI chat').closest('button');
+    expect(within(cloudPill as HTMLElement).queryByLabelText('Session not driven by cloudcli')).toBeNull();
+  });
+
+  it('carries the hedged tooltip copy on the tab badge', () => {
+    setHideCliOriginChats(false);
+    renderOriginTabs();
+
+    expect(screen.getByLabelText('Session not driven by cloudcli')).toHaveAttribute(
+      'title',
+      'Not driven by cloudcli — started from a terminal/CLI (or created before session tracking), so its live status is unknown',
+    );
   });
 });

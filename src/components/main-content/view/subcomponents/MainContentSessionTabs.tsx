@@ -16,6 +16,8 @@ import {
   type SessionTabViewModel,
 } from '../../utils/sessionTabs';
 
+import CliOriginBadge from './CliOriginBadge';
+
 type MainContentSessionTabsProps = {
   selectedProject: Project;
   selectedSession: ProjectSession | null;
@@ -221,6 +223,7 @@ export default function MainContentSessionTabs({
                       className="h-4 w-4 flex-shrink-0"
                     />
                     <span className="min-w-0 flex-1 truncate">{getSessionName(session, t)}</span>
+                    {session.origin === 'cli' && <CliOriginBadge />}
                     {dot && (
                       <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', dot)} aria-hidden />
                     )}
@@ -263,6 +266,8 @@ export default function MainContentSessionTabs({
                 >
                   <SessionProviderLogo provider={session.__provider} className="h-3.5 w-3.5 flex-shrink-0" />
                   <span className="truncate">{getSessionName(session, t)}</span>
+                  {/* Flag terminal/CLI-started tabs (#225) with the sidebar's hedged badge. */}
+                  {session.origin === 'cli' && <CliOriginBadge />}
                   {dot && <span className={cn('h-1.5 w-1.5 flex-shrink-0 rounded-full', dot)} aria-hidden />}
                 </Pill>
               );
