@@ -19,6 +19,9 @@ export default function FolderBrowserModal({
   onFolderSelected,
 }: FolderBrowserModalProps) {
   const [currentPath, setCurrentPath] = useState('~');
+  // Only the server knows WORKSPACES_ROOT, so it tells us when the current
+  // directory has no navigable parent (#238).
+  const [isAtWorkspaceRoot, setIsAtWorkspaceRoot] = useState(true);
   const [folders, setFolders] = useState<FolderSuggestion[]>([]);
   const [loadingFolders, setLoadingFolders] = useState(false);
   const [showHiddenFolders, setShowHiddenFolders] = useState(false);
@@ -34,6 +37,7 @@ export default function FolderBrowserModal({
     try {
       const result = await browseFilesystemFolders(pathToLoad);
       setCurrentPath(result.path);
+      setIsAtWorkspaceRoot(result.isAtRoot);
       setFolders(result.suggestions);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load folders');
@@ -90,7 +94,10 @@ export default function FolderBrowserModal({
     }
   }, [currentPath, loadFolders, newFolderName]);
 
-  const parentPath = getParentPath(currentPath);
+  // At the workspace root the parent is out of bounds, so browsing to it can
+  // only ever 403 — don't offer the row at all. getParentPath still guards the
+  // filesystem-root edge cases ('/', '~', 'C:\').
+  const parentPath = isAtWorkspaceRoot ? null : getParentPath(currentPath);
 
   if (!isOpen) {
     return null;

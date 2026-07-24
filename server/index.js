@@ -383,15 +383,20 @@ app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
         } catch (error) {
             // Use default root as-is if realpath fails
         }
+        const isAtRoot = resolvedPath === resolvedWorkspaceRoot;
         const suggestions = buildBrowseSuggestions(
             directories,
             BROWSE_COMMON_DIRS,
-            resolvedPath === resolvedWorkspaceRoot,
+            isAtRoot,
         );
 
+        // `isAtRoot` is what lets the picker hide its ".." row here: only the
+        // server knows WORKSPACES_ROOT, so a client deriving the parent by
+        // string manipulation would offer a click that can only 403 (#238).
         res.json({
             path: resolvedPath,
-            suggestions: suggestions
+            suggestions: suggestions,
+            isAtRoot
         });
 
     } catch (error) {
