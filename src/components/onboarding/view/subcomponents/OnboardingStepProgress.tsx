@@ -37,7 +37,9 @@ export default function OnboardingStepProgress({ currentStep }: OnboardingStepPr
                   <p className={`text-sm font-medium ${isActive ? 'text-foreground' : 'text-muted-foreground'}`}>
                     {step.title}
                   </p>
-                  {step.required && <span className="text-xs text-red-500">Required</span>}
+                  {/* A completed step is no longer an outstanding requirement — keeping the red
+                      label next to the green check reads as an unresolved error (#247). */}
+                  {step.required && !isCompleted && <span className="text-xs text-red-500">Required</span>}
                 </div>
               </div>
 
