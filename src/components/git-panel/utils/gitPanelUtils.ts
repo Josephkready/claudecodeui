@@ -1,6 +1,48 @@
 import { FILE_STATUS_BADGE_CLASSES, FILE_STATUS_GROUPS, FILE_STATUS_LABELS } from '../constants/constants';
 import type { FileStatusCode, GitStatusResponse } from '../types/types';
 
+/**
+ * Commit timestamps (#235).
+ *
+ * Git hands back ISO-8601 (`2026-07-24T12:51:06-07:00`). Rendering that raw was
+ * the only place in the app a machine string reached the user, so both the
+ * collapsed row and the expanded detail now go through these. `en-US` is pinned
+ * rather than using the ambient locale so the two views — and the tests — can't
+ * disagree depending on where the app is running.
+ *
+ * Unparseable input is passed straight through: showing whatever git said beats
+ * showing "Invalid Date".
+ */
+export function formatCommitDate(dateString: string): string {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    return dateString;
+  }
+
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+/** Same instant with the time of day, for the collapsed row's `title`. */
+export function formatCommitTimestamp(dateString: string): string {
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    return dateString;
+  }
+
+  return date.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
 export function getAllChangedFiles(gitStatus: GitStatusResponse | null): string[] {
   if (!gitStatus) {
     return [];

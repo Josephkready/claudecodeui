@@ -3,17 +3,14 @@ import { useMemo } from 'react';
 import type { GitCommitSummary } from '../../types/types';
 import type { CommitGraphRow } from '../../utils/commitGraph';
 import { laneColor } from '../../utils/commitGraph';
-import { getStatusBadgeClass, parseCommitFiles } from '../../utils/gitPanelUtils';
+import {
+  formatCommitDate,
+  formatCommitTimestamp,
+  getStatusBadgeClass,
+  parseCommitFiles,
+} from '../../utils/gitPanelUtils';
 import GitDiffViewer from '../shared/GitDiffViewer';
 import CommitGraphStrip from './CommitGraphStrip';
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
 
 // One "HEAD -> main" / "origin/x" / "tag: v1" decoration pill next to the
 // commit message, tinted with the commit's graph lane color.
@@ -90,10 +87,10 @@ export default function CommitHistoryItem({
                 </span>
               )}
               <p className="truncate text-sm font-medium text-foreground">{commit.message}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 text-sm text-muted-foreground" title={formatCommitTimestamp(commit.date)}>
                 {commit.author}
                 {' \u2022 '}
-                {commit.date}
+                {formatCommitDate(commit.date)}
               </p>
             </div>
             <span className="flex-shrink-0 font-mono text-sm text-muted-foreground/60">
@@ -119,7 +116,7 @@ export default function CommitHistoryItem({
               </span>
               <span>
                 <span className="text-muted-foreground/60">Date </span>
-                {formatDate(commit.date)}
+                {formatCommitDate(commit.date)}
               </span>
             </div>
 
