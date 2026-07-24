@@ -748,3 +748,134 @@ test('a streamed event refreshes activity so a busy run is never reaped', async 
     assert.equal(run.status, 'running');
   });
 });
+
+test('reapStaleRuns still completes a run when the abort hook throws or rejects', async () => {
+  await withIsolatedDatabase(() => {
+    // A wedged child's interrupt may itself throw or never settle; the reaper's
+    // UI-clearing complete must not depend on the abort hook succeeding.
+    for (const [id, hook] of [
+      ['throws', () => { throw new Error('boom'); }],
+      ['rejects', () => Promise.reject(new Error('boom'))],
+    ] as const) {
+      sessionsDb.createAppSession(id, 'claude', '/workspace/demo');
+      const connection = new FakeConnection();
+      const run = chatRunRegistry.startRun({
+        appSessionId: id,
+        provider: 'claude',
+        providerSessionId: 'p',
+        connection: connection as never,
+        userId: null,
+      });
+      assert.ok(run);
+      chatRunRegistry.setRunAbortHook(hook);
+      run.lastActivityAt = Date.now() - 60 * 60 * 1000;
+
+      assert.equal(chatRunRegistry.reapStaleRuns(), 1, `${id}: the run is reaped despite the hook failure`);
+      assert.equal(run.status, 'completed');
+      assert.ok(connection.frames.some((frame) => frame.kind === 'complete'));
+    }
+  });
+});
+
+test('reapStaleRuns reaps only the stale run among fresh and blocked peers', async () => {
+  await withIsolatedDatabase(() => {
+    const start = (id: string) => {
+      sessionsDb.createAppSession(id, 'claude', '/workspace/demo');
+      const run = chatRunRegistry.startRun({
+        appSessionId: id,
+        provider: 'claude',
+        providerSessionId: null,
+        connection: new FakeConnection() as never,
+        userId: null,
+      });
+      assert.ok(run);
+      return run;
+    };
+
+    const stale = start('stale');
+    const fresh = start('fresh');
+    const blocked = start('blocked');
+    stale.lastActivityAt = Date.now() - 60 * 60 * 1000;
+    blocked.lastActivityAt = Date.now() - 60 * 60 * 1000;
+    blocked.awaitingInputSince = Date.now() - 60 * 60 * 1000;
+
+    assert.equal(chatRunRegistry.reapStaleRuns(), 1);
+    assert.equal(stale.status, 'completed', 'the idle, non-blocked run is reaped');
+    assert.equal(fresh.status, 'running', 'a recently-active run is left alone');
+    assert.equal(blocked.status, 'running', 'a blocked run is left alone');
+  });
+});
+
+test('reapStaleRuns with the default window never reaps a freshly-started run', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('brand-new', 'claude', '/workspace/demo');
+    const run = chatRunRegistry.startRun({
+      appSessionId: 'brand-new',
+      provider: 'claude',
+      providerSessionId: null,
+      connection: new FakeConnection() as never,
+      userId: null,
+    });
+    assert.ok(run);
+
+    // No backdating, no explicit threshold: the default window must not fire.
+    assert.equal(chatRunRegistry.reapStaleRuns(), 0);
+    assert.equal(run.status, 'running');
+  });
+});
+
+test('startStaleRunReaper sweeps on its interval and stop halts it', async (t) => {
+  await withIsolatedDatabase(() => {
+    // Mock only setInterval (Date stays real so the idle-window compare holds),
+    // mirroring the approval reaper's timer test. The reaper is unref'd, so a real
+    // timer could let the process exit before a tick fires.
+    t.mock.timers.enable({ apis: ['setInterval'] });
+    try {
+      sessionsDb.createAppSession('ticked', 'claude', '/workspace/demo');
+      const connection = new FakeConnection();
+      const run = chatRunRegistry.startRun({
+        appSessionId: 'ticked',
+        provider: 'claude',
+        providerSessionId: null,
+        connection: connection as never,
+        userId: null,
+      });
+      assert.ok(run);
+      run.lastActivityAt = Date.now() - 60 * 60 * 1000;
+
+      chatRunRegistry.startStaleRunReaper(10);
+      t.mock.timers.tick(10); // one interval → the stale run is swept
+      assert.equal(run.status, 'completed', 'an interval tick reaps the stale run');
+
+      // Stop halts it: a fresh stale run added after stop survives further ticks.
+      chatRunRegistry.stopStaleRunReaper();
+      sessionsDb.createAppSession('survivor', 'claude', '/workspace/demo');
+      const survivor = chatRunRegistry.startRun({
+        appSessionId: 'survivor',
+        provider: 'claude',
+        providerSessionId: null,
+        connection: new FakeConnection() as never,
+        userId: null,
+      });
+      assert.ok(survivor);
+      survivor.lastActivityAt = Date.now() - 60 * 60 * 1000;
+      t.mock.timers.tick(10 * 100);
+      assert.equal(survivor.status, 'running', 'stop() halts the reaper — no tick fires after stop');
+    } finally {
+      chatRunRegistry.stopStaleRunReaper();
+      t.mock.timers.reset();
+    }
+  });
+});
+
+test('startStaleRunReaper is idempotent (a second start spins up no second timer)', (t) => {
+  const setIntervalSpy = t.mock.method(global, 'setInterval');
+  try {
+    chatRunRegistry.startStaleRunReaper(60_000);
+    chatRunRegistry.startStaleRunReaper(60_000);
+    assert.equal(setIntervalSpy.mock.callCount(), 1, 'a second start must not create a second timer');
+  } finally {
+    chatRunRegistry.stopStaleRunReaper();
+    chatRunRegistry.stopStaleRunReaper();
+  }
+});

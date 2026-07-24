@@ -40,7 +40,9 @@ export type ChatRun = {
   completedAt: number | null;
   /**
    * Epoch ms of the last event this run streamed (its last sign of life),
-   * refreshed on every decorated event. A run whose provider generator wedged
+   * refreshed on every decorated event (i.e. everything except `session_created`,
+   * which the writer swallows before decoration — a one-time near-start event, so
+   * its exemption can't cause a false reap). A run whose provider generator wedged
    * without ever emitting a terminal `complete` (a never-EOF stream, a stuck
    * tool, a child that died without closing its pipe) would otherwise sit
    * `running` forever — nothing else reaps a non-blocked run. The stale-run
