@@ -18,7 +18,7 @@
     "projects": "projects",
     "noMatchingProjects": "No matching projects",
     "tryDifferentSearch": "Try adjusting your search term",
-    "runClaudeCli": "Run Claude CLI in a project directory to get started"
+    "runClaudeCli": "Use the + button above to create one, or run Claude CLI in a project directory"
   },
   "app": {
     "title": "CloudCLI",
