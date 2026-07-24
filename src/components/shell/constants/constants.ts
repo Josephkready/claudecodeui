@@ -11,6 +11,21 @@ export const PROMPT_OPTION_SCAN_LINES = 15;
 export const PROMPT_MAX_OPTIONS = 5;
 export const PROMPT_MIN_OPTIONS = 2;
 
+/**
+ * Single source of truth for the terminal surface colour (#246).
+ *
+ * xterm quantises its canvas height to whole rows, so the wrapper's leftover
+ * space (plus the container padding) is always visible around the terminal.
+ * When the wrapper used Tailwind `bg-gray-900` (#111827) and xterm painted
+ * `#1e1e1e`, that leftover showed up as a band of the wrong grey — a mismatch
+ * no amount of sizing can hide. Both the xterm theme and the React wrappers
+ * read this constant so they can't drift apart again.
+ */
+export const TERMINAL_BACKGROUND_COLOR = '#1e1e1e';
+
+/** Inline style for any element framing the xterm canvas. */
+export const TERMINAL_SURFACE_STYLE = { backgroundColor: TERMINAL_BACKGROUND_COLOR } as const;
+
 export const TERMINAL_OPTIONS: ITerminalOptions = {
   cursorBlink: true,
   fontSize: 14,
@@ -25,10 +40,10 @@ export const TERMINAL_OPTIONS: ITerminalOptions = {
   macOptionClickForcesSelection: true,
   // Keep the runtime theme keys used by the previous JSX implementation.
   theme: {
-    background: '#1e1e1e',
+    background: TERMINAL_BACKGROUND_COLOR,
     foreground: '#d4d4d4',
     cursor: '#ffffff',
-    cursorAccent: '#1e1e1e',
+    cursorAccent: TERMINAL_BACKGROUND_COLOR,
     selectionBackground: '#264f78',
     selectionForeground: '#ffffff',
     black: '#000000',

@@ -10,6 +10,7 @@ import {
   PROMPT_MIN_OPTIONS,
   PROMPT_OPTION_SCAN_LINES,
   SHELL_RESTART_DELAY_MS,
+  TERMINAL_SURFACE_STYLE,
 } from '../constants/constants';
 import { useShellRuntime } from '../hooks/useShellRuntime';
 import { sendSocketMessage } from '../utils/socket';
@@ -270,7 +271,9 @@ export default function Shell({
   const overlayDescription = overlayMode === 'connecting' ? connectingDescription : readyDescription;
 
   return (
-    <div className="flex h-full w-full flex-col bg-gray-900">
+    // Painted from the xterm theme rather than a Tailwind grey so the frame
+    // around the canvas matches the terminal exactly (#246).
+    <div className="flex h-full w-full flex-col" style={TERMINAL_SURFACE_STYLE}>
       <ShellHeader
         isConnected={isConnected}
         isInitialized={isInitialized}
