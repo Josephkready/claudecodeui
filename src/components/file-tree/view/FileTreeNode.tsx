@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react';
 import { ChevronRight, Folder, FolderOpen } from 'lucide-react';
 import { cn } from '../../../lib/utils';
+import { FILE_TREE_DETAILED_GRID_CLASS } from '../constants/constants';
 import type { FileTreeNode as FileTreeNodeType, FileTreeViewMode } from '../types/types';
 import { Input } from '../../../shared/view/ui';
 import FileContextMenu from './FileContextMenu';
@@ -96,7 +97,10 @@ export default function FileTreeNode({
   // View mode only changes the row layout; selection, expansion, and recursion stay shared.
   const rowClassName = cn(
     viewMode === 'detailed'
-      ? 'group grid grid-cols-12 gap-2 py-[3px] pr-2 hover:bg-accent/60 cursor-pointer items-center rounded-sm transition-colors duration-100'
+      ? cn(
+          'group py-[3px] pr-2 hover:bg-accent/60 cursor-pointer items-center rounded-sm transition-colors duration-100',
+          FILE_TREE_DETAILED_GRID_CLASS,
+        )
       : viewMode === 'compact'
       ? 'group flex items-center justify-between py-[3px] pr-2 hover:bg-accent/60 cursor-pointer rounded-sm transition-colors duration-100'
       : 'group flex items-center gap-1.5 py-[3px] pr-2 cursor-pointer rounded-sm hover:bg-accent/60 transition-colors duration-100',
@@ -143,21 +147,25 @@ export default function FileTreeNode({
     >
       {viewMode === 'detailed' ? (
         <>
-          <div className="col-span-5 flex min-w-0 items-center gap-1.5">
+          <div className="flex min-w-0 items-center gap-1.5">
             <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-            <span className={nameClassName}>{item.name}</span>
+            <span className={nameClassName} title={item.name}>
+              {item.name}
+            </span>
           </div>
-          <div className="col-span-2 text-sm tabular-nums text-muted-foreground">
+          <div className="truncate text-sm tabular-nums text-muted-foreground">
             {item.type === 'file' ? formatFileSize(item.size) : ''}
           </div>
-          <div className="col-span-3 text-sm text-muted-foreground">{formatRelativeTime(item.modified)}</div>
-          <div className="col-span-2 font-mono text-sm text-muted-foreground">{item.permissionsRwx || ''}</div>
+          <div className="truncate text-sm text-muted-foreground">{formatRelativeTime(item.modified)}</div>
+          <div className="truncate font-mono text-sm text-muted-foreground">{item.permissionsRwx || ''}</div>
         </>
       ) : viewMode === 'compact' ? (
         <>
           <div className="flex min-w-0 items-center gap-1.5">
             <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-            <span className={nameClassName}>{item.name}</span>
+            <span className={nameClassName} title={item.name}>
+              {item.name}
+            </span>
           </div>
           <div className="ml-2 flex flex-shrink-0 items-center gap-3 text-sm text-muted-foreground">
             {item.type === 'file' && (
@@ -171,7 +179,9 @@ export default function FileTreeNode({
       ) : (
         <>
           <TreeItemIcon item={item} isOpen={isOpen} renderFileIcon={renderFileIcon} />
-          <span className={nameClassName}>{item.name}</span>
+          <span className={nameClassName} title={item.name}>
+            {item.name}
+          </span>
         </>
       )}
     </div>
