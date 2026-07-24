@@ -267,4 +267,27 @@ describe('MainContentSessionTabs — CLI-origin badge (#225)', () => {
       'Not driven by cloudcli — started from a terminal/CLI (or created before session tracking), so its live status is unknown',
     );
   });
+
+  it('badges only the CLI-origin item in the mobile overlay list', async () => {
+    setHideCliOriginChats(false);
+    const user = userEvent.setup();
+    render(
+      <MainContentSessionTabs
+        selectedProject={mixedOriginProject}
+        selectedSession={{ id: 's1' } as unknown as ProjectSession}
+        processingSessions={new Map() as SessionActivityMap}
+        isMobile
+        onSessionSelect={vi.fn()}
+        onNewSession={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Open sessions menu' }));
+
+    // Same rule inside the collapsed overlay: only the terminal-started row is badged.
+    expect(screen.getAllByLabelText('Session not driven by cloudcli')).toHaveLength(1);
+    const cliItem = screen.getByText('Terminal chat').closest('[role="menuitem"]');
+    expect(cliItem).not.toBeNull();
+    expect(within(cliItem as HTMLElement).getByText('CLI')).toBeInTheDocument();
+  });
 });
