@@ -311,7 +311,7 @@ export default function SidebarProjectItem({
                     {project.displayName}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {sessionCountDisplay}
+                    {sessionCountLabel}
                     {project.fullPath !== project.displayName && (
                       <span className="ml-1 opacity-60" title={project.fullPath}>
                         {' - '}
