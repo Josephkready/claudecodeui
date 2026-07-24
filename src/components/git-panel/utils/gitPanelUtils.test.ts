@@ -1,9 +1,16 @@
+// Pinned before anything formats a date: the commit-timestamp assertions below
+// are calendar-day exact, and the default host zone would make them drift
+// between a developer's machine and CI.
+process.env.TZ = 'UTC';
+
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { GitStatusResponse } from '../types/types';
 
 import {
+  formatCommitDate,
+  formatCommitTimestamp,
   getAllChangedFiles,
   getChangedFileCount,
   hasChangedFiles,
@@ -11,6 +18,32 @@ import {
   getStatusBadgeClass,
   parseCommitFiles,
 } from './gitPanelUtils';
+
+// ── commit timestamps (#235) ───────────────────────────────────────────────
+
+test('formatCommitDate humanises the ISO-8601 string git returns', () => {
+  assert.equal(formatCommitDate('2026-07-24T12:51:06-07:00'), 'Jul 24, 2026');
+});
+
+test('formatCommitDate pins en-US so the row and the detail view agree', () => {
+  // A `toLocaleDateString()` with no explicit locale would drift with the host,
+  // e.g. render "05/01/2026" under en-GB.
+  assert.equal(formatCommitDate('2026-01-05T00:00:00Z'), 'Jan 5, 2026');
+});
+
+test('formatCommitDate passes unparseable input through rather than showing Invalid Date', () => {
+  assert.equal(formatCommitDate('not-a-date'), 'not-a-date');
+});
+
+test('formatCommitTimestamp keeps the time of day for the tooltip', () => {
+  const formatted = formatCommitTimestamp('2026-07-24T12:51:06-07:00');
+  assert.ok(formatted.includes('Jul 24, 2026'), formatted);
+  assert.match(formatted, /\d{1,2}:\d{2}:\d{2}/);
+});
+
+test('formatCommitTimestamp passes unparseable input through', () => {
+  assert.equal(formatCommitTimestamp(''), '');
+});
 
 // ── status-summary helpers (drive the Changes badge + list) ────────────────
 
