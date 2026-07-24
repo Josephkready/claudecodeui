@@ -73,6 +73,19 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     setActiveLoginProvider(provider);
   };
 
+  // Editing a git field is the user acting on the validation message, so the
+  // banner has to go with it — otherwise a corrected form keeps shouting the
+  // error it already resolved (#236).
+  const handleGitNameChange = (value: string) => {
+    setErrorMessage('');
+    setGitName(value);
+  };
+
+  const handleGitEmailChange = (value: string) => {
+    setErrorMessage('');
+    setGitEmail(value);
+  };
+
   const handleLoginComplete = (exitCode: number) => {
     if (exitCode === 0 && activeLoginProvider) {
       void checkProviderAuthStatus(activeLoginProvider);
@@ -142,10 +155,6 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     }
   };
 
-  const isCurrentStepValid = currentStep === 0
-    ? Boolean(gitName.trim() && gitEmail.trim() && gitEmailPattern.test(gitEmail))
-    : true;
-
   return (
     <>
       <div className="relative h-screen overflow-y-auto bg-background">
@@ -165,8 +174,8 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                 gitName={gitName}
                 gitEmail={gitEmail}
                 isSubmitting={isSubmitting}
-                onGitNameChange={setGitName}
-                onGitEmailChange={setGitEmail}
+                onGitNameChange={handleGitNameChange}
+                onGitEmailChange={handleGitEmailChange}
               />
             ) : (
               <AgentConnectionsStep
@@ -197,8 +206,12 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
               <div className="flex items-center gap-3">
                 {currentStep < 1 ? (
                   <button
+                    // Deliberately NOT gated on validity: disabling here would
+                    // re-hide the reason the step is blocked, which is the whole
+                    // bug (#236). Matches the project-creation wizard, which
+                    // keeps Next live and surfaces the error on click.
                     onClick={handleNextStep}
-                    disabled={!isCurrentStepValid || isSubmitting}
+                    disabled={isSubmitting}
                     className="flex items-center gap-2 rounded-xl bg-primary px-6 py-2.5 font-medium text-primary-foreground shadow-lg shadow-primary/25 transition-all duration-200 hover:brightness-110 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
                   >
                     {isSubmitting ? (
