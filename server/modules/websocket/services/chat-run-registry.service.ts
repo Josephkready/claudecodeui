@@ -39,6 +39,18 @@ export type ChatRun = {
   startedAt: number;
   completedAt: number | null;
   /**
+   * Epoch ms of the last event this run streamed (its last sign of life),
+   * refreshed on every decorated event (i.e. everything except `session_created`,
+   * which the writer swallows before decoration — a one-time near-start event, so
+   * its exemption can't cause a false reap). A run whose provider generator wedged
+   * without ever emitting a terminal `complete` (a never-EOF stream, a stuck
+   * tool, a child that died without closing its pipe) would otherwise sit
+   * `running` forever — nothing else reaps a non-blocked run. The stale-run
+   * reaper force-completes any running, non-blocked run silent past
+   * `RUN_INACTIVITY_TIMEOUT_MS`, using this timestamp as the idle clock.
+   */
+  lastActivityAt: number;
+  /**
    * When the run first entered a blocked/awaiting-input state (a permission
    * prompt or plan-mode approval), else `null`. Surfaced as `blocked` in
    * `listRunningRuns()` so the sidebar ranks a blocked-but-running session as
@@ -72,6 +84,45 @@ export type ChatRun = {
  * example when the browser tab was asleep while the run completed).
  */
 const COMPLETED_RUN_RETENTION_MS = 5 * 60 * 1000;
+
+/**
+ * Parses a non-negative integer millisecond env var, warning (and falling back)
+ * on a malformed value rather than silently truncating. Mirrors claude-sdk's
+ * `parseMsEnv`, kept local so this provider-agnostic module doesn't depend on
+ * the Claude runtime.
+ */
+function parseMsEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw.trim() === '') {
+    return fallback;
+  }
+  const parsed = Number(raw.trim());
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    console.warn(`[WARN] ${name}="${raw}" is not a valid non-negative integer (ms); using ${fallback}.`);
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
+ * How long a running, non-blocked run may stream nothing before the reaper
+ * force-completes it. The only way a run leaves the "running" set is a terminal
+ * `complete` event; if a provider generator wedges without ever producing one
+ * (a never-EOF stream, a stuck tool, a child that died without closing its
+ * pipe), the run shows "running" forever and nothing else reaps it (the approval
+ * reaper only handles runs *blocked* on a prompt). This backstop clears it.
+ *
+ * Deliberately generous (default 45 min, matching the approval reaper's window)
+ * because event silence alone cannot distinguish a wedged run from one
+ * legitimately mid-way through a long, quiet tool call (a big build/test run
+ * streams no events while it works) — so the window sits far beyond any
+ * realistic single-tool duration to avoid killing live work. Tunable via
+ * `CLOUDCLI_RUN_INACTIVITY_TIMEOUT_MS`; `0` disables reaping entirely.
+ */
+const RUN_INACTIVITY_TIMEOUT_MS = parseMsEnv('CLOUDCLI_RUN_INACTIVITY_TIMEOUT_MS', 45 * 60 * 1000);
+
+/** How often the stale-run reaper sweeps the registry. */
+const RUN_STALE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 /**
  * Upper bound on buffered events per run so a very long tool-heavy run cannot
@@ -157,6 +208,18 @@ const dispatchingSessions = new Set<string>();
  */
 let draining = false;
 
+/**
+ * Best-effort hook the stale-run reaper calls to interrupt a wedged run's
+ * underlying provider child before force-completing it, so a hung run frees its
+ * process instead of leaving a zombie. Injected at startup (it routes to the
+ * provider abort fns); `null` in tests/until wired, in which case the reaper
+ * still clears the registry state (the user-visible fix) without the child kill.
+ */
+let runAbortHook: ((run: ChatRun) => unknown) | null = null;
+
+/** Handle for the periodic stale-run reaper, so it can be started/stopped once. */
+let staleRunReaperTimer: ReturnType<typeof setInterval> | null = null;
+
 async function broadcastCanonicalSessionUpsert(appSessionId: string): Promise<void> {
   const row = sessionsDb.getSessionById(appSessionId);
   if (!row || row.isArchived) {
@@ -235,6 +298,9 @@ function decorateAndRecordEvent(run: ChatRun, message: NormalizedMessage): Norma
   }
 
   run.lastSeq += 1;
+  // Every streamed event is a sign of life; the stale-run reaper reads this to
+  // tell a genuinely-working run from one whose generator wedged silently.
+  run.lastActivityAt = Date.now();
 
   const outbound: NormalizedMessage = {
     ...message,
@@ -372,6 +438,81 @@ function setRunBlocked(run: ChatRun, blocked: boolean): void {
   }
 }
 
+/**
+ * Pure reap policy: the running, non-blocked runs whose last streamed event is
+ * older than `thresholdMs`.
+ *
+ * Blocked runs (`awaitingInputSince !== null`) are exempt — a run parked on a
+ * permission/plan prompt is legitimately idle and owned by the approval reaper;
+ * force-completing it here would discard a decision the user still intends to
+ * make. A non-positive threshold disables reaping (returns `[]`). Exported so
+ * the policy is unit-testable without touching the live registry or timers.
+ */
+export function findStaleRuns(
+  runsMap: Map<string, ChatRun>,
+  now: number,
+  thresholdMs: number,
+): ChatRun[] {
+  const stale: ChatRun[] = [];
+  if (!(thresholdMs > 0)) {
+    return stale;
+  }
+  for (const run of runsMap.values()) {
+    if (run.status !== 'running' || run.awaitingInputSince !== null) {
+      continue;
+    }
+    if (now - run.lastActivityAt >= thresholdMs) {
+      stale.push(run);
+    }
+  }
+  return stale;
+}
+
+/**
+ * Force-completes every stale run: interrupts its provider child (best-effort,
+ * via the injected abort hook) and drives the terminal `complete` through the
+ * single completion choke point — flipping status, writing `last_completed_at`,
+ * broadcasting Done, and evicting — exactly as a natural finish would. Returns
+ * how many runs were reaped.
+ */
+function reapStaleRuns(now = Date.now(), thresholdMs = RUN_INACTIVITY_TIMEOUT_MS): number {
+  const stale = findStaleRuns(runs, now, thresholdMs);
+  for (const run of stale) {
+    console.warn(
+      `[run reaper] Force-completing run for session ${run.appSessionId} (provider ${run.provider}) `
+      + `after ${Math.round((now - run.lastActivityAt) / 60000)} min with no streamed output`,
+    );
+
+    // Best-effort: interrupt the wedged provider child so it doesn't linger as a
+    // zombie. Fire-and-forget — a hung child's interrupt may itself never
+    // settle, and the UI-clearing complete below must not wait on it.
+    if (runAbortHook) {
+      try {
+        void Promise.resolve(runAbortHook(run)).catch((error) => {
+          console.error('[run reaper] Abort hook failed', {
+            appSessionId: run.appSessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      } catch (error) {
+        console.error('[run reaper] Abort hook threw', {
+          appSessionId: run.appSessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Guarded to this exact run (a fresh run for the session may have replaced
+    // it) and to a still-running status (the abort hook may have already driven
+    // the complete synchronously), so the reaper can never terminate a newer run
+    // or double-complete.
+    if (runs.get(run.appSessionId) === run && run.status === 'running') {
+      run.writer.sendComplete({ exitCode: 1 });
+    }
+  }
+  return stale.length;
+}
+
 function logPersistFailure(what: string, appSessionId: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[ChatRunRegistry] Failed to ${what} in active_runs journal`, { appSessionId, error: message });
@@ -429,6 +570,7 @@ function createAndRegisterRun(input: StartRunInput): ChatRun {
     writer: null as unknown as ChatSessionWriter,
     startedAt: Date.now(),
     completedAt: null,
+    lastActivityAt: Date.now(),
     awaitingInputSince: null,
     pendingApprovalCount: 0,
   };
@@ -732,6 +874,51 @@ export const chatRunRegistry = {
   },
 
   /**
+   * Wires the best-effort abort hook the stale-run reaper uses to interrupt a
+   * wedged run's provider child. Set once at startup to route to the provider
+   * abort fns; unset (`null`) leaves reaping to clear only the registry state.
+   */
+  setRunAbortHook(hook: ((run: ChatRun) => unknown) | null): void {
+    runAbortHook = hook;
+  },
+
+  /**
+   * Sweeps once for stale runs, force-completing any running, non-blocked run
+   * that has streamed nothing past the inactivity window. Exposed for the
+   * periodic reaper and for tests to drive a deterministic sweep.
+   */
+  reapStaleRuns(now?: number, thresholdMs?: number): number {
+    return reapStaleRuns(now, thresholdMs);
+  },
+
+  /**
+   * Starts the periodic stale-run reaper. No-op when disabled
+   * (`CLOUDCLI_RUN_INACTIVITY_TIMEOUT_MS=0`) or already running. The timer is
+   * unref'd so it never keeps the process alive on its own.
+   */
+  startStaleRunReaper(intervalMs = RUN_STALE_SWEEP_INTERVAL_MS): void {
+    if (staleRunReaperTimer || !(RUN_INACTIVITY_TIMEOUT_MS > 0)) {
+      return;
+    }
+    staleRunReaperTimer = setInterval(() => {
+      try {
+        reapStaleRuns();
+      } catch (error) {
+        console.error('[run reaper] Error while reaping stale runs:', error instanceof Error ? error.message : error);
+      }
+    }, intervalMs);
+    staleRunReaperTimer.unref?.();
+  },
+
+  /** Stops the stale-run reaper (used on shutdown and in tests). */
+  stopStaleRunReaper(): void {
+    if (staleRunReaperTimer) {
+      clearInterval(staleRunReaperTimer);
+      staleRunReaperTimer = null;
+    }
+  },
+
+  /**
    * Enters shutdown-drain mode on SIGTERM/SIGINT: stop accepting new runs so
    * in-flight runs can finish before the process exits. Idempotent.
    */
@@ -790,5 +977,7 @@ export const chatRunRegistry = {
     pendingQueues.clear();
     dispatchingSessions.clear();
     draining = false;
+    this.stopStaleRunReaper();
+    runAbortHook = null;
   },
 };

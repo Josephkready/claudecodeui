@@ -107,6 +107,12 @@ const makeMockSpawnFn = (provider) => (message, options, writer) => {
 const chatSpawnFns = AGENT_MOCK_PROVIDER
     ? { claude: makeMockSpawnFn('claude'), codex: makeMockSpawnFn('codex') }
     : { claude: queryClaudeSDK, codex: queryCodex };
+// Provider abort fns, addressed by the provider-native session id. Shared by the
+// chat.abort handler and the stale-run reaper's abort hook (below).
+const chatAbortFns = {
+    claude: abortClaudeSDKSession,
+    codex: abortCodexSession,
+};
 // The activation warning is emitted in the "Ready" banner below (next to the
 // AUTH_DISABLED warning), where an operator scanning startup output will see it.
 
@@ -118,10 +124,7 @@ const wss = createWebSocketServer(server, {
     },
     chat: {
         spawnFns: chatSpawnFns,
-        abortFns: {
-            claude: abortClaudeSDKSession,
-            codex: abortCodexSession,
-        },
+        abortFns: chatAbortFns,
         resolveToolApproval,
         getPendingApprovalsForSession,
     },
@@ -1335,6 +1338,19 @@ async function startServer() {
 
             // Reap runs abandoned mid-approval (idle child processes) (#86).
             startStaleToolApprovalReaper();
+
+            // Reap runs whose provider generator wedged without ever emitting a
+            // terminal `complete` — otherwise a finished session shows "running"
+            // forever. The hook interrupts the wedged child (best-effort) before
+            // the reaper force-completes the run in the registry.
+            chatRunRegistry.setRunAbortHook((run) => {
+                const abortFn = chatAbortFns[run.provider];
+                if (abortFn && run.providerSessionId) {
+                    return abortFn(run.providerSessionId);
+                }
+                return undefined;
+            });
+            chatRunRegistry.startStaleRunReaper();
         });
 
         await closeSessionsWatcher();
@@ -1383,6 +1399,11 @@ async function startServer() {
                 stopStaleToolApprovalReaper();
             } catch (err) {
                 console.error('[approval reaper] Error stopping reaper during shutdown:', err?.message || err);
+            }
+            try {
+                chatRunRegistry.stopStaleRunReaper();
+            } catch (err) {
+                console.error('[run reaper] Error stopping reaper during shutdown:', err?.message || err);
             }
             try {
                 stopAiSessionTitler();
