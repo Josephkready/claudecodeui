@@ -69,3 +69,49 @@ describe('MainContentHeader — archive action (#215)', () => {
     expect(screen.queryByRole('button', { name: 'Archive conversation' })).toBeNull();
   });
 });
+
+/*
+ * #225: the opened-session header must surface the CLI origin. A session cloudcli
+ * isn't driving (origin === 'cli') gets the same hedged badge/tooltip the sidebar
+ * Conversations list uses; a cloudcli-driven (or origin-less) session stays clean,
+ * so the two are no longer indistinguishable once opened.
+ */
+const cliSession = {
+  id: 's1',
+  summary: 'hello world',
+  origin: 'cli',
+  lastActivity: '2026-07-22T00:00:00Z',
+} as unknown as ProjectSession;
+
+const cloudSession = {
+  id: 's1',
+  summary: 'hello world',
+  origin: 'cloudcli',
+  lastActivity: '2026-07-22T00:00:00Z',
+} as unknown as ProjectSession;
+
+describe('MainContentHeader — CLI-origin badge (#225)', () => {
+  it('badges the open-session title when the session is terminal/CLI-driven', () => {
+    renderHeader(cliSession);
+
+    const badge = screen.getByLabelText('Session not driven by cloudcli');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('CLI');
+    expect(badge).toHaveAttribute(
+      'title',
+      'Not driven by cloudcli — started from a terminal/CLI (or created before session tracking), so its live status is unknown',
+    );
+  });
+
+  it('shows no CLI badge for a cloudcli-driven session', () => {
+    renderHeader(cloudSession);
+
+    expect(screen.queryByLabelText('Session not driven by cloudcli')).toBeNull();
+  });
+
+  it('shows no CLI badge when no conversation is open', () => {
+    renderHeader(null);
+
+    expect(screen.queryByLabelText('Session not driven by cloudcli')).toBeNull();
+  });
+});
