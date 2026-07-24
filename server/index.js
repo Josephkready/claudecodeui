@@ -12,6 +12,7 @@ import mime from 'mime-types';
 
 import { AppError, WORKSPACES_ROOT, validateWorkspacePath } from '@/shared/utils.js';
 import { shouldExcludeFileTreeEntry } from '@/shared/file-tree-excludes.js';
+import { buildBrowseSuggestions, parseBrowseCommonDirs } from '@/shared/browse-suggestions.js';
 import {
     getRouterBasename,
     injectRouterBasenameIntoHtml,
@@ -270,6 +271,14 @@ app.use(express.static(path.join(APP_ROOT, 'dist'), {
 // /api/config endpoint removed - no longer needed
 // Frontend now uses window.location for WebSocket URLs
 
+// Common-dir names promoted to the front of the folder picker when browsing the
+// workspace root. Read once at startup from BROWSE_COMMON_DIRS. Default (unset)
+// keeps the historical hardcoded list for backward compatibility; set the var
+// to a comma-separated list to customize, or to an empty string to disable the
+// reordering entirely (useful when WORKSPACES_ROOT is a narrow root like ~/repos
+// where those names never appear — see issue #227). See server/shared/browse-suggestions.ts.
+const BROWSE_COMMON_DIRS = parseBrowseCommonDirs(process.env.BROWSE_COMMON_DIRS);
+
 const expandWorkspacePath = (inputPath) => {
     if (!inputPath) return inputPath;
     if (inputPath === '~') {
@@ -365,23 +374,20 @@ app.get('/api/browse-filesystem', authenticateToken, async (req, res) => {
                 return a.name.localeCompare(b.name);
             });
 
-        // Add common directories if browsing home directory
-        const suggestions = [];
+        // When browsing the workspace root, optionally promote the configured
+        // common-dir names to the front (see BROWSE_COMMON_DIRS above). The
+        // ordering logic lives in the pure, unit-tested buildBrowseSuggestions.
         let resolvedWorkspaceRoot = defaultRoot;
         try {
             resolvedWorkspaceRoot = await fsPromises.realpath(defaultRoot);
         } catch (error) {
             // Use default root as-is if realpath fails
         }
-        if (resolvedPath === resolvedWorkspaceRoot) {
-            const commonDirs = ['Desktop', 'Documents', 'Projects', 'Development', 'Dev', 'Code', 'workspace'];
-            const existingCommon = directories.filter(dir => commonDirs.includes(dir.name));
-            const otherDirs = directories.filter(dir => !commonDirs.includes(dir.name));
-
-            suggestions.push(...existingCommon, ...otherDirs);
-        } else {
-            suggestions.push(...directories);
-        }
+        const suggestions = buildBrowseSuggestions(
+            directories,
+            BROWSE_COMMON_DIRS,
+            resolvedPath === resolvedWorkspaceRoot,
+        );
 
         res.json({
             path: resolvedPath,
