@@ -36,6 +36,7 @@ function ChatInterface({
   showRawParameters,
   showThinking,
   sendByCtrlEnter,
+  isMobile,
   externalMessageUpdate,
   newSessionTrigger,
 }: ChatInterfaceProps) {
@@ -201,6 +202,7 @@ function ChatInterface({
     tokenBudget,
     sendMessage,
     sendByCtrlEnter,
+    isMobile,
     onSessionProcessing,
     onSessionEstablished: handleSessionEstablished,
     onInputFocusChange,
