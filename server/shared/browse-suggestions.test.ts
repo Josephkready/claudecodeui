@@ -73,6 +73,10 @@ test('when NOT at the workspace root, the common-dirs list is never applied', ()
   );
 });
 
+test('buildBrowseSuggestions handles an empty directories input at the workspace root', () => {
+  assert.deepEqual(buildBrowseSuggestions([], ['Documents'], true), []);
+});
+
 test('buildBrowseSuggestions returns a new array and does not mutate the input', () => {
   const input = [...sortedDirs];
   const suggestions = buildBrowseSuggestions(input, ['Documents'], true);
