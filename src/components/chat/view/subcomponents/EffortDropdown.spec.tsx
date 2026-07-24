@@ -56,7 +56,7 @@ describe('EffortDropdown', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('does not double-fire selection for a mouse pointerup (click handles mouse)', () => {
+  it('ignores a mouse pointerup and selects only on the click that follows it', () => {
     const onSelectEffort = vi.fn();
     render(
       <EffortDropdown effort="default" availableEffortOptions={[{ value: 'low' }, { value: 'high' }]} onSelectEffort={onSelectEffort} />,
@@ -64,9 +64,17 @@ describe('EffortDropdown', () => {
 
     open();
     const option = screen.getByRole('menuitemradio', { name: 'high' });
-    fireEvent.pointerUp(option, { pointerType: 'mouse' });
-    fireEvent.click(option);
 
+    // A mouse pointerup must NOT select (mouse goes through onClick), so the
+    // menu is still open and nothing has fired yet. This makes the
+    // `pointerType !== 'mouse'` guard load-bearing: drop it and this fails.
+    fireEvent.pointerUp(option, { pointerType: 'mouse' });
+    expect(onSelectEffort).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu')).toBeTruthy();
+
+    // The real mouse click is what selects — exactly once.
+    fireEvent.click(option);
     expect(onSelectEffort).toHaveBeenCalledTimes(1);
+    expect(onSelectEffort).toHaveBeenCalledWith('high');
   });
 });

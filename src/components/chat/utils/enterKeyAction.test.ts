@@ -49,6 +49,13 @@ test('desktop with sendByCtrlEnter: Ctrl+Enter still submits', () => {
   assert.equal(resolveEnterKeyAction(ctx({ sendByCtrlEnter: true, ctrlKey: true })), 'submit');
 });
 
+test('Ctrl/Cmd+Shift+Enter inserts a newline (Shift overrides the send modifier)', () => {
+  assert.equal(resolveEnterKeyAction(ctx({ ctrlKey: true, shiftKey: true })), 'newline');
+  assert.equal(resolveEnterKeyAction(ctx({ metaKey: true, shiftKey: true })), 'newline');
+  // and on mobile, where plain Enter is already a newline
+  assert.equal(resolveEnterKeyAction(ctx({ isMobile: true, ctrlKey: true, shiftKey: true })), 'newline');
+});
+
 test('mobile: plain Enter inserts a newline (does not submit)', () => {
   assert.equal(resolveEnterKeyAction(ctx({ isMobile: true })), 'newline');
 });
